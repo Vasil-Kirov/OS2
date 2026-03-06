@@ -1,3 +1,4 @@
+
 ; Declare constants for the multiboot header.
 MBALIGN  equ  1 << 0            ; align loaded modules on page boundaries
 MEMINFO  equ  1 << 1            ; provide memory map
@@ -6,12 +7,10 @@ MBFLAGS  equ  MBALIGN | MEMINFO | VIDINFO ; this is the Multiboot 'flag' field
 MAGIC    equ  0x1BADB002        ; 'magic number' lets bootloader find the header
 CHECKSUM equ -(MAGIC + MBFLAGS)   ; checksum of above, to prove we are multiboot
 
+KERNEL_OFFSET equ 0xC0000000
 
-; Declare a multiboot header that marks the program as a kernel. These are magic
-; values that are documented in the multiboot standard. The bootloader will
-; search for this signature in the first 8 KiB of the kernel file, aligned at a
-; 32-bit boundary. The signature is in its own section so the header can be
-; forced to be within the first 8 KiB of the kernel file.
+%define phys_addr(a) (a-KERNEL_OFFSET)
+
 section .multiboot.data alloc write
 align 4
 	dd MAGIC
@@ -27,121 +26,85 @@ align 4
 	dd 900   ; Height
 	dd 32    ; bits per pixel
 
+section .bootstrap_stack alloc write nobits
+stack_bottom:
+	resb 0x10000
+stack_top:
+
 extern kernel_main
 extern _kernel_start
 extern _kernel_end
 
-; The linker script specifies _start as the entry point to the kernel and the
-; bootloader will jump to this position once the kernel has been loaded. It
-; doesn't make sense to return from this function as the bootloader is gone.
-; Declare _start as a function symbol with the given symbol size.
 section .multiboot.text
 global _start:function (_start.end - _start)
 _start:
-	; The bootloader has loaded us into 32-bit protected mode on a x86
-	; machine. Interrupts are disabled. Paging is disabled. The processor
-	; state is as defined in the multiboot standard. The kernel has full
-	; control of the CPU. The kernel can only make use of hardware features
-	; and any code it provides as part of itself. There's no printf
-	; function, unless the kernel provides its own <stdio.h> header and a
-	; printf implementation. There are no security restrictions, no
-	; safeguards, no debugging mechanisms, only what the kernel provides
-	; itself. It has absolute and complete power over the
-	; machine.
-	cli
+	mov [phys_addr(mboot_ebx)], ebx
+	mov [phys_addr(mboot_eax)], eax
 
-	; Enable protected mode? It's already enabled though...
-	mov ecx, cr0
-	or ecx, 0x1
-	mov cr0, ecx
+	mov edi, phys_addr(boot_page_table) ; Page Table address
+	mov esi, 0 ; Address to map
+	mov ecx, 1024 ; Iteration counter
 
-	
-	mov ecx, [ebx + 88]
-	and ecx, 0xFFFFF000
-	or ecx, 0x3
-	mov [boot_page_table1 - 0xC0000000 + 1023 * 4], ecx
+l1:
+	mov edx, esi
+	or edx, 0b11 ; Present, R/W
+	mov [edi], edx
 
-	; Load the first page directory in CR3
-	mov ecx, boot_page_directory - 0xC0000000
+	add edi, 4 ; Next Table Entry
+	add esi, 0x1000 ; Next page
+	dec ecx
+	jnz l1
+
+	mov ecx, phys_addr(boot_page_table) + 0x3
+	mov [phys_addr(paging_directory)],           ecx
+	mov [phys_addr(paging_directory) + 768 * 4], ecx
+
+	mov ecx, phys_addr(paging_directory)
 	mov cr3, ecx
-	
-	; Enable paging
+
 	mov ecx, cr0
-	or ecx, 0x80000000
+	or ecx, (1 << 31) | (1 << 16) ; Enable paging and write protect
 	mov cr0, ecx
 
-	lea ecx, high_kernel
+
+	lea ecx, higher_kernel
 	jmp ecx
 _start.end:
 
 section .text
 
-high_kernel:
-
-	; To set up a stack, we set the esp register to point to the top of our
-	; stack (as it grows downwards on x86 systems). This is necessarily done
-	; in assembly as languages such as C cannot function without a stack.
+higher_kernel:
 	mov esp, stack_top
+	mov ecx, 0
+	mov [phys_addr(paging_directory)], ecx ; Unmap identity mapped kernel
 
-
-	; This is a good place to initialize crucial processor state before the
-	; high-level kernel is entered. It's best to minimize the early
-	; environment where crucial features are offline. Note that the
-	; processor is not fully initialized yet: Features such as floating
-	; point instructions and instruction set extensions are not initialized
-	; yet. The GDT should be loaded here. Paging should be enabled here.
-	; C++ features such as global constructors and exceptions will require
-	; runtime support to work as well.
-
-	; Enter the high-level kernel. The ABI requires the stack is 16-byte
-	; aligned at the time of the call instruction (which afterwards pushes
-	; the return pointer of size 4 bytes). The stack was originally 16-byte
-	; aligned above and we've since pushed a multiple of 16 bytes to the
-	; stack since (pushed 0 bytes so far) and the alignment is thus
-	; preserved and the call is well defined.
-    ; note, that if you are building on Windows, C functions may have "_" prefix in assembly: _kernel_main
-
-	;mov sys_multiboot_info, ebx
+	mov ebx, [mboot_ebx]
+	mov eax, [mboot_eax]
 
 	push ebx
 	push eax
 	call kernel_main
 
-	; If the system has nothing more to do, put the computer into an
-	; infinite loop. To do that:
-	; 1) Disable interrupts with cli (clear interrupt enable in eflags).
-	;    They are already disabled by the bootloader, so this is not needed.
-	;    Mind that you might later enable interrupts and return from
-	;    kernel_main (which is sort of nonsensical to do).
-	; 2) Wait for the next interrupt to arrive with hlt (halt instruction).
-	;    Since they are disabled, this will lock up the computer.
-	; 3) Jump to the hlt instruction if it ever wakes up due to a
-	;    non-maskable interrupt occurring or due to system management mode.
-	cli
+	jmp $
+	
 
-.hang:	hlt
-	jmp .hang
 
+global paging_directory
+global kernel_page_table
 section .bss
-align 16
-stack_bottom:
-resb 0x10000 ; Enough memory... hopefully
-stack_top:
-
-
-section .entry.data
 align 0x1000
-boot_page_table1:
-	%assign addr 0
-	%rep 1024
-		dd addr + 0x3
-		%assign addr addr+0x1000
-	%endrep
 
-; Mirror first 4 MB
-global boot_page_directory
-boot_page_directory:
-	%rep 1024
-		dd (boot_page_table1 - 0xC0000000) + 0x7
-	%endrep
+paging_directory:
+	resb 1024 * 4
 
+boot_page_table:
+	resb 1024 * 4
+
+kernel_page_table:
+	resb 1024 * 4
+
+mboot_saved_info:
+    mboot_eax: resd 1
+    mboot_ebx: resd 1
+
+	

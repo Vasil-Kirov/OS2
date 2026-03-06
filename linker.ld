@@ -58,7 +58,7 @@ SECTIONS
 	{
 		*(COMMON)
 		*(.bss)
-		*(.entry.data)
+		*(.bootstrap_stack)
 	}
 
 	_kernel_end = .;

@@ -20,6 +20,7 @@ OBJS= \
 	  $(BUILD_DIR)/crti.o \
 	  $(BUILD_DIR)/boot.o \
 	  $(BUILD_DIR)/kernel.o \
+	  $(BUILD_DIR)/kmem.o \
 	  $(BUILD_DIR)/crtn.o \
 	  #$(BUILD_DIR)/asmfn.o \
 
@@ -87,6 +88,9 @@ $(BUILD_DIR)/boot.o: $(ARCHDIR)/boot.s
 	$(AS) $(ASM_FLAGS) $< -o $@
 
 $(BUILD_DIR)/kernel.o: $(SRC_DIR)/kernel/kernel.c
+	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kmem.o: $(SRC_DIR)/kernel/kmem.c
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/crti.o: $(ARCHDIR)/crti.s
