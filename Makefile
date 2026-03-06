@@ -8,7 +8,7 @@ CC=$(ARCH)-elf-gcc
 ARCHDIR=$(SRC_DIR)/kernel/arch/$(ARCH)
 ASM_FLAGS=-felf32
 KERNEL_FLAGS=-ffreestanding -m32 -g -c -I$(SRC_DIR)/stdlib
-CFLAGS=-g -O2 -ffreestanding -Wall -Wextra -isystem=/usr/include
+CFLAGS=-g -O0 -ffreestanding -Wall -Wextra -isystem=/usr/include -static -fno-pie
 SYSROOT=$(PWD)/sysroot
 KERNEL_CFLAGS:=$(CFLAGS) --sysroot=$(SYSROOT)
 LIBK_CFLAGS:=$(CFLAGS) -D__is_libk --sysroot=$(SYSROOT)
@@ -40,6 +40,13 @@ verify: bin
 
 run:
 	qemu-system-i386 -cdrom $(ISO)
+
+run_debug:
+	qemu-system-i386 -M smm=off -d int -cdrom $(ISO)
+
+run_gdb:
+	qemu-system-i386 -M smm=off -s -S -d int -cdrom $(ISO)
+
 
 image: $(ISO)
 bin: $(BUILD_DIR)/VOS.bin

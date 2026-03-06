@@ -1,5 +1,8 @@
-#include <stdint.h>
 
+#ifndef _MULTIBOOT_H
+#define _MULTIBOOT_H
+
+#include <stdint.h>
 
 typedef struct {
     uint32_t flags;           // Multiboot info version number
@@ -30,3 +33,10 @@ typedef struct {
 	uint8_t  framebuffer_bpp;
 	uint8_t  framebuffer_type;
 } multiboot_info;
+
+typedef struct {
+   uint32_t size, base_addr_low, base_addr_high, length_low, length_high, type;
+} multiboot_memory_map_t;
+
+#endif
+

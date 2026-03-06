@@ -71,6 +71,7 @@ l1:
 	jmp ecx
 _start.end:
 
+global panic
 section .text
 
 higher_kernel:
@@ -81,16 +82,19 @@ higher_kernel:
 	mov ebx, [mboot_ebx]
 	mov eax, [mboot_eax]
 
+	add ebx, KERNEL_OFFSET ; Set pointer to virtual memory
+
 	push ebx
 	push eax
 	call kernel_main
 
 	jmp $
 	
+panic:
+	jmp $
 
 
 global paging_directory
-global kernel_page_table
 section .bss
 align 0x1000
 
@@ -98,9 +102,6 @@ paging_directory:
 	resb 1024 * 4
 
 boot_page_table:
-	resb 1024 * 4
-
-kernel_page_table:
 	resb 1024 * 4
 
 mboot_saved_info:
