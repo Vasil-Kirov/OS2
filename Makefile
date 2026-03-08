@@ -13,14 +13,16 @@ SYSROOT=$(PWD)/sysroot
 KERNEL_CFLAGS:=$(CFLAGS) --sysroot=$(SYSROOT)
 LIBK_CFLAGS:=$(CFLAGS) -D__is_libk --sysroot=$(SYSROOT)
 LIBK_OBJS:=$(BUILD_DIR)/strlen.o
-
 ISO=$(BUILD_DIR)/VOS.iso
+QEMU_FLAGS=-cdrom $(ISO) -device ahci,id=ahci -drive file=disk.qcow2,if=none,id=disk -device ide-hd,drive=disk,bus=ahci.0
 
 OBJS= \
 	  $(BUILD_DIR)/crti.o \
 	  $(BUILD_DIR)/boot.o \
 	  $(BUILD_DIR)/kernel.o \
 	  $(BUILD_DIR)/kmem.o \
+	  $(BUILD_DIR)/io.o \
+	  $(BUILD_DIR)/pci.o \
 	  $(BUILD_DIR)/crtn.o \
 	  #$(BUILD_DIR)/asmfn.o \
 
@@ -39,19 +41,16 @@ verify: $(BUILD_DIR)/VOS.bin
 	fi
 
 run:
-	qemu-system-i386 -cdrom $(ISO)
+	qemu-system-i386 $(QEMU_FLAGS)
 
 run_debug:
-	qemu-system-i386 -M smm=off -d int -cdrom $(ISO)
+	qemu-system-i386 -M smm=off -d int $(QEMU_FLAGS)
 
 run_gdb:
-	qemu-system-i386 -M smm=off -s -S -d int -cdrom $(ISO)
+	qemu-system-i386 -M smm=off -s -S -d int $(QEMU_FLAGS)
 
 
 iso: $(ISO)
-
-image: $(BUILD_DIR)/VOS.bin
-	dd if=/dev/zero of=$(BUILD_DIR)/VOS.dd bs=1048576 count=128
 
 $(SYSROOT)/usr/lib/libk.a: $(LIBK_OBJS)
 	mkdir -pv $(SYSROOT)/usr/lib
@@ -102,8 +101,14 @@ $(BUILD_DIR)/kernel.o: $(SRC_DIR)/kernel/kernel.c
 $(BUILD_DIR)/kmem.o: $(SRC_DIR)/kernel/kmem.c
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/pci.o: $(SRC_DIR)/kernel/pci.c
+	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/io.o: $(SRC_DIR)/kernel/io.s
+	$(AS) $(ASM_FLAGS) $< -o $@
+
 $(BUILD_DIR)/crti.o: $(ARCHDIR)/crti.s
-	$(CC) $(LIBK_CFLAGS) -c $< -o $@
+	$(AS) $(LIBK_CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/crtn.o: $(ARCHDIR)/crtn.s
 	$(CC) $(LIBK_CFLAGS) -c $< -o $@
