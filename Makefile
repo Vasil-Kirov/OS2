@@ -31,7 +31,7 @@ HEADERS=$(SRC_DIR)/kernel/include/kernel \
 
 .PHONY = all image kernel clean install install-headers install-kernel install-libs
 
-verify: bin
+verify: $(BUILD_DIR)/VOS.bin
 	@if grub-file --is-x86-multiboot $(BUILD_DIR)/VOS.bin; then \
 		echo "Confirmed!"; \
 	else \
@@ -48,8 +48,10 @@ run_gdb:
 	qemu-system-i386 -M smm=off -s -S -d int -cdrom $(ISO)
 
 
-image: $(ISO)
-bin: $(BUILD_DIR)/VOS.bin
+iso: $(ISO)
+
+image: $(BUILD_DIR)/VOS.bin
+	dd if=/dev/zero of=$(BUILD_DIR)/VOS.dd bs=1048576 count=128
 
 $(SYSROOT)/usr/lib/libk.a: $(LIBK_OBJS)
 	mkdir -pv $(SYSROOT)/usr/lib

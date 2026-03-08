@@ -34,8 +34,18 @@ typedef struct {
 	uint8_t  framebuffer_type;
 } multiboot_info;
 
-typedef struct {
-   uint32_t size, base_addr_low, base_addr_high, length_low, length_high, type;
+#define MULTIBOOT_MEMORY_AVAILABLE              1
+#define MULTIBOOT_MEMORY_RESERVED               2
+#define MULTIBOOT_MEMORY_ACPI_RECLAIMABLE       3
+#define MULTIBOOT_MEMORY_NVS                    4
+#define MULTIBOOT_MEMORY_BADRAM                 5
+typedef struct __attribute__((packed)) {
+   uint32_t size;
+   uint32_t base_addr_low;
+   uint32_t base_addr_high;
+   uint32_t length_low;
+   uint32_t length_high;
+   uint32_t type;
 } multiboot_memory_map_t;
 
 #endif

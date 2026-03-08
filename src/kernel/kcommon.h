@@ -15,11 +15,15 @@ typedef int16_t i16;
 typedef int32_t i32;
 typedef int64_t i64;
 
+#define ALIGN_UP(x, a) (((x) + (a) - 1) & ~((typeof(x))(a) - 1))
+#define ALIGN_DOWN(x, a) ((x) & ~((typeof(x))(a) - 1))
 
 #define ARRAY_COUNT(arr) (sizeof((arr)) / sizeof((arr)[0]))
 
 __attribute__((noreturn))
 void panic(const char *err);
+
+
 
 #endif
 
