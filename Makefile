@@ -7,10 +7,9 @@ AR=$(ARCH)-elf-ar
 CC=$(ARCH)-elf-gcc
 ARCHDIR=$(SRC_DIR)/kernel/arch/$(ARCH)
 ASM_FLAGS=-felf32
-KERNEL_FLAGS=-ffreestanding -m32 -g -c -I$(SRC_DIR)/stdlib
 CFLAGS=-g -O0 -ffreestanding -Wall -Wextra -isystem=/usr/include -static -fno-pie
 SYSROOT=$(PWD)/sysroot
-KERNEL_CFLAGS:=$(CFLAGS) --sysroot=$(SYSROOT)
+KERNEL_CFLAGS:=$(CFLAGS) --sysroot=$(SYSROOT) -I$(SRC_DIR)/kernel
 LIBK_CFLAGS:=$(CFLAGS) -D__is_libk --sysroot=$(SYSROOT)
 LIBK_OBJS:=$(BUILD_DIR)/strlen.o
 ISO=$(BUILD_DIR)/VOS.iso

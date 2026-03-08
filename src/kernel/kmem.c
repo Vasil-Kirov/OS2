@@ -78,22 +78,20 @@ void *kmem_map_phy_addr(uintptr_t physical_address, size_t size, uint16_t flags)
 
 KmemPhysicalFreeList physical_free_list;
 
-void kmem_make_phy_page_table(multiboot_memory_map_t *mb_physical_mmap, u32 mb_physical_mmap_len)
+void kmem_make_phy_page_table(multiboot_mmap_entry *mb_physical_mmap, u32 mb_physical_mmap_len)
 {
 	KmemPhysicalFreeListNode *at = physical_free_list.head;
 	for(u32 i = 0; i < mb_physical_mmap_len; ++i) {
 		// @NOTE: This shouldn't happen right? On a 32 bit system?
-		if(mb_physical_mmap[i].base_addr_high || mb_physical_mmap->length_high)
-			continue;
 
 		// For a page to be usable it needs to be available, to not be a part of the kernel, and to be at least 4kb (1 page)
 		if(mb_physical_mmap[i].type != MULTIBOOT_MEMORY_AVAILABLE)
 			continue;
 
-		uintptr_t addr = mb_physical_mmap[i].base_addr_low;
-		size_t size = mb_physical_mmap[i].length_low;
+		uintptr_t addr = mb_physical_mmap[i].base_addr;
+		size_t size = mb_physical_mmap[i].length;
 		if(addr < PAGE_SIZE * 1024) {
-			size_t to_offset = PAGE_SIZE * 1024 - mb_physical_mmap[i].base_addr_low;
+			size_t to_offset = PAGE_SIZE * 1024 - addr;
 			if(size < to_offset)
 				continue;
 			size -= to_offset;
@@ -186,11 +184,10 @@ void kmem_init_freelists()
 	physical_free_list.tail = at;
 }
 
-void kmem_init(multiboot_info *mb)
+void kmem_init(multiboot_mmap_tag *mmap)
 {
 	kmem_init_main_kernel_tables();
-	multiboot_memory_map_t *mb_physical_mmap = kmem_map_phy_addr(mb->mmap_addr, mb->mmap_length, 0x3);
 	kmem_init_freelists();
-	kmem_make_phy_page_table(mb_physical_mmap, mb->mmap_length / sizeof(multiboot_memory_map_t));
+	kmem_make_phy_page_table(mmap->entries, (mmap->size - offsetof(multiboot_mmap_tag, entries)) / mmap->entry_size);
 }
 

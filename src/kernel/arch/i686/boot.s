@@ -4,27 +4,46 @@ MBALIGN  equ  1 << 0            ; align loaded modules on page boundaries
 MEMINFO  equ  1 << 1            ; provide memory map
 VIDINFO  equ  1 << 2
 MBFLAGS  equ  MBALIGN | MEMINFO | VIDINFO ; this is the Multiboot 'flag' field
-MAGIC    equ  0x1BADB002        ; 'magic number' lets bootloader find the header
-CHECKSUM equ -(MAGIC + MBFLAGS)   ; checksum of above, to prove we are multiboot
+MAGIC    equ  0xE85250D6
 
 KERNEL_OFFSET equ 0xC0000000
 
 %define phys_addr(a) (a-KERNEL_OFFSET)
 
 section .multiboot.data alloc write
-align 4
+align 8
+mb_header:
 	dd MAGIC
-	dd MBFLAGS
-	dd CHECKSUM
-	dd 0 ; Load address nonsense
-	dd 0 ; Load address nonsense
-	dd 0 ; Load address nonsense
-	dd 0 ; Load address nonsense
-	dd 0 ; Load address nonsense
-	dd 0     ; Linear graphics mode
-	dd 1600  ; Width
-	dd 900   ; Height
-	dd 32    ; bits per pixel
+	dd 0 ; Architecture = 32 bit Intel PMode
+	dd mb_header_end - mb_header
+	dd -(MAGIC + (mb_header_end - mb_header)) ; Negative sum of the top 3 fields
+
+align 8
+info_request:
+	; info request tag
+	dw 1    ; type
+	dw 0    ; flags
+	dd (info_request_end-info_request)    ; size
+	dd 8    ; framebuffer
+	dd 6    ; memory map
+	dd 15   ; ACPI (new)
+info_request_end:
+
+align 8
+framebuffer_tag:
+	dw 5    ; type
+	dw 0    ; flags
+	dd 20   ; size
+	dd 1600 ; width
+	dd 900  ; height
+	dd 32   ; bpp
+	
+align 8
+end_tag:
+	dw 0
+	dw 0
+	dd 8
+mb_header_end:
 
 section .bootstrap_stack alloc write nobits
 stack_bottom:

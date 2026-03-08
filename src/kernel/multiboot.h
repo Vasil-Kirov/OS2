@@ -2,8 +2,10 @@
 #ifndef _MULTIBOOT_H
 #define _MULTIBOOT_H
 
-#include <stdint.h>
+#include <kcommon.h>
 
+#if 0
+#define MULTIBOOT_MAGIC (0x2BADB002)
 typedef struct {
     uint32_t flags;           // Multiboot info version number
     uint32_t mem_lower;       // Available memory from BIOS
@@ -47,6 +49,57 @@ typedef struct __attribute__((packed)) {
    uint32_t length_high;
    uint32_t type;
 } multiboot_memory_map_t;
+#else
+
+#define MULTIBOOT_MAGIC (0x36D76289)
+
+typedef struct {
+	u32 type;
+	u32 size;
+} multiboot_tag;
+
+typedef struct {
+	u32 total_size;
+	u32 reserved;
+	multiboot_tag tags[0];
+} multiboot_info;
+
+typedef struct {
+	u64 base_addr;
+	u64 length;
+#define MULTIBOOT_MEMORY_AVAILABLE (1)
+	u32 type;
+	u32 reserved;
+} multiboot_mmap_entry;
+
+typedef struct {
+	u32 type; // 6
+	u32 size;
+	u32 entry_size;
+	u32 entry_version;
+	multiboot_mmap_entry entries[0];
+} multiboot_mmap_tag;
+
+typedef struct {
+	u32 type;
+	u32 size;
+	u64 framebuffer_addr;
+	u32 framebuffer_pitch;
+	u32 framebuffer_width;
+	u32 framebuffer_height;
+	u8 framebuffer_bpp;
+	u8 framebuffer_type;
+	u8 reserved;
+	// color_info[0]
+} multiboot_framebuffer_tag;
+
+typedef enum {
+	MBTag_MemoryMap = 6,
+	MBTag_Framebuffer = 8,
+} MultibootTagTypes;
+
+
+#endif
 
 #endif
 
