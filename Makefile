@@ -12,7 +12,7 @@ SYSROOT=$(PWD)/sysroot
 KERNEL_CFLAGS:=$(CFLAGS) --sysroot=$(SYSROOT) -I$(SRC_DIR)/kernel
 LIBK_CFLAGS:=$(CFLAGS) -D__is_libk --sysroot=$(SYSROOT)
 ISO=$(BUILD_DIR)/VOS.iso
-QEMU_FLAGS=-cdrom $(ISO) -device ahci,id=ahci -drive file=disk.qcow2,if=none,id=disk -device ide-hd,drive=disk,bus=ahci.0 -machine q35,acpi=on
+QEMU_FLAGS=-cdrom $(ISO) -device nvme,drive=nvme0,serial=nvme0 -drive file=disk.qcow2,if=none,id=nvme0,format=qcow2 -machine q35,acpi=on
 
 LIBK_OBJS := \
 	     $(BUILD_DIR)/strlen.o \
