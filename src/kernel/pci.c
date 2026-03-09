@@ -72,7 +72,7 @@ bool pcie_read(PCIe *pcie, u8 bus, u8 dev, u8 fn, void *buf, size_t size)
 		if(pcie->mcfg->addrs[i].start_bus <= bus && pcie->mcfg->addrs[i].end_bus >= bus) {
 			MCFG_ConfigSpace *cfg = &pcie->mcfg->addrs[i];
 			void *mapped = NULL;
-			if(i == pcie->mapped_entry) {
+			if((int)i == pcie->mapped_entry) {
 				mapped = pcie->map + (((bus-cfg->start_bus) << 20) | (dev << 15) | (fn << 12));
 			} else {
 				uintptr_t addr = cfg->base_addr + (((bus-cfg->start_bus) << 20) | (dev << 15) | (fn << 12));

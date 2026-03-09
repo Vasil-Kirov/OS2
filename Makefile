@@ -27,6 +27,7 @@ OBJS= \
 	  $(BUILD_DIR)/kmem.o \
 	  $(BUILD_DIR)/io.o \
 	  $(BUILD_DIR)/pci.o \
+	  $(BUILD_DIR)/nvme.o \
 	  $(BUILD_DIR)/acpi.o \
 	  $(BUILD_DIR)/crtn.o \
 	  #$(BUILD_DIR)/asmfn.o \
@@ -110,6 +111,9 @@ $(BUILD_DIR)/pci.o: $(SRC_DIR)/kernel/pci.c
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/acpi.o: $(SRC_DIR)/kernel/acpi.c
+	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/nvme.o: $(SRC_DIR)/kernel/drivers/nvme.c
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/io.o: $(SRC_DIR)/kernel/io.s

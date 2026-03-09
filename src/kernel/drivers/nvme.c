@@ -1,5 +1,8 @@
+#include "nvme.h"
+
 #include <errno.h>
 #include <pci.h>
+#include <kcommon.h>
 
 
 int nvme_init(PCIe *pcie)
@@ -7,8 +10,9 @@ int nvme_init(PCIe *pcie)
 	int bus;
 	int dev;
 	int fn;
+	MCFG_ConfigSpace *cfg = NULL;
 	for(size_t i = 0; i < pcie->entry_count; ++i) {
-		MCFG_ConfigSpace *cfg = &pcie->mcfg->addrs[i];
+		cfg = &pcie->mcfg->addrs[i];
 		if(!pcie_map_config_space(pcie, cfg->start_bus))
 			return -ENOMEM;
 		
@@ -29,15 +33,24 @@ int nvme_init(PCIe *pcie)
 					// Mass Storage,   NVMe
 					if(class != 0x1 || subclass != 0x8)
 						continue;
+
+					goto found_device;
 				}
 			}
 		}
 
 		pcie_unmap_config_space(pcie);
 	}
-
 	return -ENODEV;
+
 found_device:
+	size_t space = pcie_bus_offset(cfg->start_bus, bus, dev, fn);
+	u32 bar0 = read32(pcie->map + space + 0x10);
+	u32 bar1 = read32(pcie->map + space + 0x14);
+	if(bar1) {
+		pcie_unmap_config_space(pcie);
+		return -EFAULT;
+	}
 
 	return 0;
 }

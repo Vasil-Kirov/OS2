@@ -1,6 +1,8 @@
 #include <kmem.h>
 #include <multiboot.h>
 #include <acpi.h>
+#include <pci.h>
+#include <drivers/nvme.h>
 
 __attribute__ ((noreturn)) 
 void panic(const char *msg)
@@ -44,12 +46,19 @@ void kernel_main(uint32_t magic, multiboot_info *mb_info)
 	if(!fb_tag || !mmap_tag || !acpio_tag)
 		panic("Failed to find all tags!");
 
+	kmem_init(mmap_tag);
+
 	(void)acpin_tag;
-	if(!check_rsdp_header(&acpio_tag->rsdp))
+	if(!rsdp_check_header(&acpio_tag->rsdp))
 		panic("Invalid RSDP header!");
 
+	PCIe *pci = pcie_init(&acpio_tag->rsdp);
+	if(!pci)
+		panic("Failed to init PCIe!");
 
-	kmem_init(mmap_tag);
+	int nvme_res = nvme_init(pci);
+
+
 	u32 *color = kmem_map(sizeof(u32));
 	if(!color)
 		panic("Failed to map kernel memory!");

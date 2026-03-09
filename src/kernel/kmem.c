@@ -56,20 +56,34 @@ void *kmem_map_phy_addr(uintptr_t physical_address, size_t size, uint16_t flags)
 	u32 page_start = physical_address & ~0xFFF;
 	size_t offset = physical_address - page_start;
 	size += offset;
+	flags |= PAGE_FLAG_PRESENT;
 	size_t needed_pages = (size / PAGE_SIZE) + 1;
 	void *res = NULL;
+	u32 page_streak = 0;
+	size_t i_start = ~0;
+	size_t j_start = ~0;
 	for(size_t i = 0; i < ARRAY_COUNT(kernel_virtual_pages) && !res; ++i) {
-		u32 page_streak = 0;
 		for(size_t j = 0; j < 1024; ++j) {
 			if(kernel_virtual_pages[i].table[j] != 0) {
 				page_streak = 0;
+				i_start = ~(size_t)0;
+				j_start = ~(size_t)0;
 			} else {
+				if(i_start == ~(size_t)0) {
+					i_start = i;
+					j_start = j;
+				}
 				page_streak++;
 				if(page_streak == needed_pages) {
-					size_t first_page = j-needed_pages+1;
-					res = kernel_virtual_pages[i].virtual_address + first_page * PAGE_SIZE;
-					for(size_t k = 0; k < needed_pages; ++k)
-						kernel_virtual_pages[i].table[first_page+k] = (page_start + k * PAGE_SIZE) | flags | PAGE_FLAG_PRESENT;
+					res = kernel_virtual_pages[i_start].virtual_address + j_start * PAGE_SIZE;
+					for(size_t ati = i_start; ati <= i; ++ati) {
+						for(size_t atj = j_start; atj < 1024; ++atj) {
+							kernel_virtual_pages[ati].table[atj] = (page_start + ((ati-i_start)*PAGE_SIZE*1024) + (atj * PAGE_SIZE)) | flags;
+							if(ati == i && atj == j)
+								break;
+						}
+						j_start = 0;
+					}
 					break;
 				}
 			}
@@ -88,18 +102,24 @@ void kmem_unmap_raw(void *virtual_address, size_t size)
 	size_t offset = virtual_address - page_start;
 	size += offset;
 	size_t needed_pages = (size / PAGE_SIZE) + 1;
+	size_t freed_pages = 0;
 	for(size_t i = 0; i < ARRAY_COUNT(kernel_virtual_pages); ++i) {
-		if(kernel_virtual_pages[i].virtual_address > page_start || kernel_virtual_pages[i].virtual_address + PAGE_SIZE * 1024 < page_start)
+		if(kernel_virtual_pages[i].virtual_address + PAGE_SIZE * 1024 < page_start)
 			continue;
 
-		size_t idx = (page_start - kernel_virtual_pages[i].virtual_address) / PAGE_SIZE;
-		for(size_t j = idx; j < idx + needed_pages; ++j)
-			kernel_virtual_pages[i].table[j] = 0;
-
-		return;
+		if(page_start >= kernel_virtual_pages[i].virtual_address) {
+			size_t idx = (page_start - kernel_virtual_pages[i].virtual_address) / PAGE_SIZE;
+			for(size_t j = idx; j < 1024 && freed_pages < needed_pages; ++j) {
+				kernel_virtual_pages[i].table[j] = 0;
+				freed_pages++;
+			}
+		} else {
+			for(size_t j = 0; j < 1024 && freed_pages < needed_pages; ++j) {
+				kernel_virtual_pages[i].table[j] = 0;
+				freed_pages++;
+			}
+		}
 	}
-
-	panic("Couldn't find virtual kernel mappings!");
 }
 
 KmemPhysicalFreeList physical_free_list;
