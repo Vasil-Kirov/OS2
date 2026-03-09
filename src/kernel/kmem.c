@@ -53,11 +53,11 @@ void *kmem_add_page_table(u32 table, uint16_t flags)
 
 void *kmem_map_phy_addr(uintptr_t physical_address, size_t size, uint16_t flags)
 {
-	u32 page_start = physical_address & ~0xFFF;
+	uintptr_t page_start = physical_address & ~0xFFF;
 	size_t offset = physical_address - page_start;
 	size += offset;
 	flags |= PAGE_FLAG_PRESENT;
-	size_t needed_pages = (size / PAGE_SIZE) + 1;
+	size_t needed_pages = (size + PAGE_SIZE-1) / PAGE_SIZE;
 	void *res = NULL;
 	u32 page_streak = 0;
 	size_t i_start = ~0;
@@ -78,7 +78,7 @@ void *kmem_map_phy_addr(uintptr_t physical_address, size_t size, uint16_t flags)
 					res = kernel_virtual_pages[i_start].virtual_address + j_start * PAGE_SIZE;
 					for(size_t ati = i_start; ati <= i; ++ati) {
 						for(size_t atj = j_start; atj < 1024; ++atj) {
-							kernel_virtual_pages[ati].table[atj] = (page_start + ((ati-i_start)*PAGE_SIZE*1024) + (atj * PAGE_SIZE)) | flags;
+							kernel_virtual_pages[ati].table[atj] = (page_start + ((ati-i_start)*PAGE_SIZE*1024) + ((atj-j_start) * PAGE_SIZE)) | flags;
 							if(ati == i && atj == j)
 								break;
 						}
@@ -101,10 +101,10 @@ void kmem_unmap_raw(void *virtual_address, size_t size)
 	void *page_start = (void *)((uintptr_t)virtual_address & ~0xFFF);
 	size_t offset = virtual_address - page_start;
 	size += offset;
-	size_t needed_pages = (size / PAGE_SIZE) + 1;
+	size_t needed_pages = (size + PAGE_SIZE-1) / PAGE_SIZE;
 	size_t freed_pages = 0;
 	for(size_t i = 0; i < ARRAY_COUNT(kernel_virtual_pages) && freed_pages < needed_pages; ++i) {
-		if(kernel_virtual_pages[i].virtual_address + PAGE_SIZE * 1024 < page_start)
+		if(kernel_virtual_pages[i].virtual_address + PAGE_SIZE * 1024 <= page_start)
 			continue;
 
 		if(page_start >= kernel_virtual_pages[i].virtual_address) {
