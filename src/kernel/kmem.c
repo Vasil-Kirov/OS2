@@ -103,7 +103,7 @@ void kmem_unmap_raw(void *virtual_address, size_t size)
 	size += offset;
 	size_t needed_pages = (size / PAGE_SIZE) + 1;
 	size_t freed_pages = 0;
-	for(size_t i = 0; i < ARRAY_COUNT(kernel_virtual_pages); ++i) {
+	for(size_t i = 0; i < ARRAY_COUNT(kernel_virtual_pages) && freed_pages < needed_pages; ++i) {
 		if(kernel_virtual_pages[i].virtual_address + PAGE_SIZE * 1024 < page_start)
 			continue;
 
