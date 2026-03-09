@@ -2,4 +2,7 @@
 -ffreestanding
 -fno-builtin
 -nostdlib
+-Isrc/kernel
+-std=c23
+--sysroot=sysroot
 

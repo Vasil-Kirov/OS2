@@ -15,15 +15,30 @@ typedef int16_t i16;
 typedef int32_t i32;
 typedef int64_t i64;
 
+//typedef _Bool bool;
+
 #define ALIGN_UP(x, a) (((x) + (a) - 1) & ~((typeof(x))(a) - 1))
 #define ALIGN_DOWN(x, a) ((x) & ~((typeof(x))(a) - 1))
 
 #define ARRAY_COUNT(arr) (sizeof((arr)) / sizeof((arr)[0]))
 
-__attribute__((noreturn))
-void panic(const char *err);
+__attribute__ ((noreturn)) 
+void panic(const char *msg);
 
+inline u8 read8(void *mem)
+{
+	return *(u8 *)mem;
+}
 
+inline u16 read16(void *mem)
+{
+	return *(u16 *)mem;
+}
+
+inline u32 read32(void *mem)
+{
+	return *(u32 *)mem;
+}
 
 #endif
 

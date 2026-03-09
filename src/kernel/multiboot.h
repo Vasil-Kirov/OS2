@@ -3,6 +3,7 @@
 #define _MULTIBOOT_H
 
 #include <kcommon.h>
+#include <acpi.h>
 
 #if 0
 #define MULTIBOOT_MAGIC (0x2BADB002)
@@ -81,7 +82,7 @@ typedef struct {
 } multiboot_mmap_tag;
 
 typedef struct {
-	u32 type;
+	u32 type; // 8
 	u32 size;
 	u64 framebuffer_addr;
 	u32 framebuffer_pitch;
@@ -93,11 +94,24 @@ typedef struct {
 	// color_info[0]
 } multiboot_framebuffer_tag;
 
+typedef struct {
+	u32 type; // 14
+	u32 size;
+	RSDP rsdp;
+} multiboot_acpi_old_tag;
+
+typedef struct {
+	u32 type; // 15
+	u32 size;
+	XSDP rsdp;
+} multiboot_acpi_new_tag;
+
 typedef enum {
 	MBTag_MemoryMap = 6,
 	MBTag_Framebuffer = 8,
+	MBTag_ACPIold = 14,
+	MBTag_ACPInew = 15,
 } MultibootTagTypes;
-
 
 #endif
 
