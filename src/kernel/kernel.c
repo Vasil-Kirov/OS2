@@ -2,6 +2,8 @@
 #include <multiboot.h>
 #include <acpi.h>
 #include <pci.h>
+#include <gdt.h>
+#include <interrupts.h>
 #include <drivers/nvme.h>
 
 __attribute__ ((noreturn)) 
@@ -47,6 +49,29 @@ void kernel_main(uint32_t magic, multiboot_info *mb_info)
 		panic("Failed to find all tags!");
 
 	kmem_init(mmap_tag);
+
+	// @TODO: Task Segment
+	size_t gdt_seg_count = 5;
+	GDT_Segment *seg = kmem_map(sizeof(GDT_Segment) * gdt_seg_count);
+	if(!seg)
+		panic("Failed to allocate memory for GDT segments!");
+
+	// NULL segment
+	seg[0] = kgdt_make_segment(0, 0, 0, 0);
+	// Kernel Code
+	seg[1] = kgdt_make_segment(0, 0xFFFFF, 0x9A, 0xC);
+	// Kernel Data
+	seg[2] = kgdt_make_segment(0, 0xFFFFF, 0x92, 0xC);
+	// User Code
+	seg[3] = kgdt_make_segment(0, 0xFFFFF, 0xFA, 0xC);
+	// User Data
+	seg[4] = kgdt_make_segment(0, 0xFFFFF, 0xF2, 0xC);
+
+	kgdt_set((uintptr_t)seg, gdt_seg_count * sizeof(GDT_Segment) - 1);
+
+	kint_setup_idt();
+
+	*(u32 *)1 = 10;
 
 	(void)acpin_tag;
 	if(!rsdp_check_header(&acpio_tag->rsdp))

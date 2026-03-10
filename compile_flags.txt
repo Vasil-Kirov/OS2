@@ -3,6 +3,7 @@
 -fno-builtin
 -nostdlib
 -Isrc/kernel
+-Isrc/kernel/arch/i686
 -std=c23
 --sysroot=sysroot
 

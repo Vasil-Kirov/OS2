@@ -40,5 +40,10 @@ static inline u32 read32(void *mem)
 	return *(u32 *)mem;
 }
 
+static inline void write32(void *mem, u32 dword)
+{
+	*(u32 *)mem = dword;
+}
+
 #endif
 

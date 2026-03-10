@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <pci.h>
 #include <kcommon.h>
+#include <kmem.h>
 
 
 int nvme_init(PCIe *pcie)
@@ -45,12 +46,19 @@ int nvme_init(PCIe *pcie)
 
 found_device:
 	size_t space = pcie_bus_offset(cfg->start_bus, bus, dev, fn);
+	u32 status_cmd = read32(pcie->map + space + 0x04);
+	status_cmd |= (1 << 2) | (1 << 1); // Enable Bus Mastering and Memory Space Access
+	status_cmd &= ~(1 << 10); // Enable interupts
+	write32(pcie->map + space + 0x04, status_cmd);
+
 	u32 bar0 = read32(pcie->map + space + 0x10);
 	u32 bar1 = read32(pcie->map + space + 0x14);
 	if(bar1) {
 		pcie_unmap_config_space(pcie);
 		return -EFAULT;
 	}
+
+	//kmem_map_phy_addr(bar0, size, PAGE_FLAG_RW);
 
 	return 0;
 }

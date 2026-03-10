@@ -9,7 +9,7 @@ ARCHDIR=$(SRC_DIR)/kernel/arch/$(ARCH)
 ASM_FLAGS=-felf32
 CFLAGS=-g -O0 -ffreestanding -Wall -Wextra -isystem=/usr/include -static -fno-pie
 SYSROOT=$(PWD)/sysroot
-KERNEL_CFLAGS:=$(CFLAGS) --sysroot=$(SYSROOT) -I$(SRC_DIR)/kernel
+KERNEL_CFLAGS:=$(CFLAGS) --sysroot=$(SYSROOT) -I$(SRC_DIR)/kernel -I$(ARCHDIR)
 LIBK_CFLAGS:=$(CFLAGS) -D__is_libk --sysroot=$(SYSROOT)
 ISO=$(BUILD_DIR)/VOS.iso
 QEMU_FLAGS=-cdrom $(ISO) -device nvme,drive=nvme0,serial=nvme0 -drive file=disk.qcow2,if=none,id=nvme0,format=qcow2 -machine q35,acpi=on
@@ -29,6 +29,9 @@ OBJS= \
 	  $(BUILD_DIR)/pci.o \
 	  $(BUILD_DIR)/nvme.o \
 	  $(BUILD_DIR)/acpi.o \
+	  $(BUILD_DIR)/gdt.o \
+	  $(BUILD_DIR)/interrupts.o \
+	  $(BUILD_DIR)/int_table.o \
 	  $(BUILD_DIR)/crtn.o \
 	  #$(BUILD_DIR)/asmfn.o \
 
@@ -115,6 +118,15 @@ $(BUILD_DIR)/acpi.o: $(SRC_DIR)/kernel/acpi.c
 
 $(BUILD_DIR)/nvme.o: $(SRC_DIR)/kernel/drivers/nvme.c
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/gdt.o: $(SRC_DIR)/kernel/gdt.c
+	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/interrupts.o: $(ARCHDIR)/interrupts.c
+	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/int_table.o: $(ARCHDIR)/interrupts.s
+	$(AS) $(ASM_FLAGS) $< -o $@
 
 $(BUILD_DIR)/io.o: $(SRC_DIR)/kernel/io.s
 	$(AS) $(ASM_FLAGS) $< -o $@
