@@ -25,24 +25,24 @@ typedef int64_t i64;
 __attribute__ ((noreturn)) 
 void panic(const char *msg);
 
-static inline u8 read8(void *mem)
+static inline u8 read8(void volatile *mem)
 {
-	return *(u8 *)mem;
+	return *(u8 volatile *)mem;
 }
 
-static inline u16 read16(void *mem)
+static inline u16 read16(void volatile *mem)
 {
-	return *(u16 *)mem;
+	return *(u16 volatile *)mem;
 }
 
-static inline u32 read32(void *mem)
+static inline u32 read32(void volatile *mem)
 {
-	return *(u32 *)mem;
+	return *(u32 volatile *)mem;
 }
 
-static inline void write32(void *mem, u32 dword)
+static inline void write32(void volatile *mem, u32 dword)
 {
-	*(u32 *)mem = dword;
+	*(u32 volatile *)mem = dword;
 }
 
 #endif

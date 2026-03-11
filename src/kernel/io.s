@@ -1,6 +1,7 @@
 
 
 global in32
+global out8
 global out32
 
 section .text
@@ -9,6 +10,14 @@ section .text
 in32:
 	mov dx, cx
 	in eax, dx
+	ret
+
+; cx = port
+; dl = byte
+out8:
+	mov al, dl
+	mov dx, cx
+	out dx, al
 	ret
 
 ; cx = port
