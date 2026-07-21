@@ -26,6 +26,7 @@ info_request:
 	dd (info_request_end-info_request)    ; size
 	dd 8    ; framebuffer
 	dd 6    ; memory map
+	dd 14   ; ACPI (old)
 	dd 15   ; ACPI (new)
 info_request_end:
 
@@ -90,7 +91,6 @@ l1:
 	jmp ecx
 _start.end:
 
-global panic
 section .text
 
 higher_kernel:
@@ -109,9 +109,6 @@ higher_kernel:
 
 	jmp $
 	
-panic:
-	jmp $
-
 
 global paging_directory
 section .bss
@@ -127,4 +124,4 @@ mboot_saved_info:
     mboot_eax: resd 1
     mboot_ebx: resd 1
 
-	
+

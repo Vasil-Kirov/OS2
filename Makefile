@@ -9,11 +9,16 @@ ARCHDIR=$(SRC_DIR)/kernel/arch/$(ARCH)
 ASM_FLAGS=-felf32
 CFLAGS=-g -O0 -ffreestanding -Wall -Wextra -isystem=/usr/include -static -fno-pie
 SYSROOT=$(PWD)/sysroot
-KERNEL_CFLAGS:=$(CFLAGS) --sysroot=$(SYSROOT) -I$(SRC_DIR)/kernel
+KERNEL_CFLAGS:=$(CFLAGS) --sysroot=$(SYSROOT) -I$(SRC_DIR)/kernel -I$(ARCHDIR)
 LIBK_CFLAGS:=$(CFLAGS) -D__is_libk --sysroot=$(SYSROOT)
-LIBK_OBJS:=$(BUILD_DIR)/strlen.o
 ISO=$(BUILD_DIR)/VOS.iso
-QEMU_FLAGS=-cdrom $(ISO) -device ahci,id=ahci -drive file=disk.qcow2,if=none,id=disk -device ide-hd,drive=disk,bus=ahci.0
+QEMU_FLAGS=-cdrom $(ISO) -device nvme,drive=nvme0,serial=nvme0 -drive file=disk.qcow2,if=none,id=nvme0,format=qcow2 -machine q35,acpi=on
+
+LIBK_OBJS := \
+	     $(BUILD_DIR)/strlen.o \
+	     $(BUILD_DIR)/memcmp.o \
+	     $(BUILD_DIR)/memcpy.o \
+
 
 OBJS= \
 	  $(BUILD_DIR)/crti.o \
@@ -22,6 +27,11 @@ OBJS= \
 	  $(BUILD_DIR)/kmem.o \
 	  $(BUILD_DIR)/io.o \
 	  $(BUILD_DIR)/pci.o \
+	  $(BUILD_DIR)/nvme.o \
+	  $(BUILD_DIR)/acpi.o \
+	  $(BUILD_DIR)/gdt.o \
+	  $(BUILD_DIR)/interrupts.o \
+	  $(BUILD_DIR)/int_table.o \
 	  $(BUILD_DIR)/crtn.o \
 	  #$(BUILD_DIR)/asmfn.o \
 
@@ -103,14 +113,36 @@ $(BUILD_DIR)/kmem.o: $(SRC_DIR)/kernel/kmem.c
 $(BUILD_DIR)/pci.o: $(SRC_DIR)/kernel/pci.c
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/acpi.o: $(SRC_DIR)/kernel/acpi.c
+	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/nvme.o: $(SRC_DIR)/kernel/drivers/nvme.c
+	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/gdt.o: $(SRC_DIR)/kernel/gdt.c
+	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/interrupts.o: $(ARCHDIR)/interrupts.c
+	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/int_table.o: $(ARCHDIR)/interrupts.s
+	$(AS) $(ASM_FLAGS) $< -o $@
+
 $(BUILD_DIR)/io.o: $(SRC_DIR)/kernel/io.s
 	$(AS) $(ASM_FLAGS) $< -o $@
 
 $(BUILD_DIR)/crti.o: $(ARCHDIR)/crti.s
-	$(AS) $(LIBK_CFLAGS) -c $< -o $@
+	$(CC) $(LIBK_CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/crtn.o: $(ARCHDIR)/crtn.s
 	$(CC) $(LIBK_CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/strlen.o: $(SRC_DIR)/libc/string/strlen.c
 	$(CC) $(LIBK_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/memcmp.o: $(SRC_DIR)/libc/string/memcmp.c
+	$(CC) $(LIBK_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/memcpy.o: $(SRC_DIR)/libc/string/memcpy.c
+	$(CC) $(LIBK_CFLAGS) -c $< -o $@
+

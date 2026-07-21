@@ -1,32 +1,64 @@
+#include "nvme.h"
+
 #include <errno.h>
 #include <pci.h>
+#include <kcommon.h>
+#include <kmem.h>
 
 
-int nvme_init()
+int nvme_init(PCIe *pcie)
 {
 	int bus;
 	int dev;
 	int fn;
-	for(bus = 0; bus < 256; ++bus) {
-		for(dev = 0; dev < 32; ++dev) {
-			for(fn = 0; fn < 8; ++fn) {
-				u32 read = pci_read(bus, dev, fn, 0x0);
-				if((read & 0xFFFF) != 0xFFFF) {
-					// Valid device
-					read = pci_read(bus, dev, fn, 0x8);
-					u8 class = read >> 24;
-					u8 subclass = (read >> 16) & 0xFF;
+	MCFG_ConfigSpace *cfg = NULL;
+	for(size_t i = 0; i < pcie->entry_count; ++i) {
+		cfg = &pcie->mcfg->addrs[i];
+		if(!pcie_map_config_space(pcie, cfg->start_bus))
+			return -ENOMEM;
+		
+		for(bus = cfg->start_bus; bus <= cfg->end_bus; ++bus) {
+			for(dev = 0; dev < 32; ++dev) {
+				for(fn = 0; fn < 8; ++fn) {
+					size_t space = pcie_bus_offset(cfg->start_bus, bus, dev, fn);
+					u16 vendor_id = read16(pcie->map + space);
+
+					// Invalid ID
+					if(vendor_id == 0xFFFF)
+						continue;
+
+					u32 data = read32(pcie->map + space + 0x8);
+					u8 class = data >> 24;
+					u8 subclass = (data >> 16) & 0xFF;
 
 					// Mass Storage,   NVMe
-					if(class == 0x1 && subclass == 0x8)
-						goto found_device;
+					if(class != 0x1 || subclass != 0x8)
+						continue;
+
+					goto found_device;
 				}
 			}
 		}
+
+		pcie_unmap_config_space(pcie);
+	}
+	return -ENODEV;
+
+found_device:
+	size_t space = pcie_bus_offset(cfg->start_bus, bus, dev, fn);
+	u32 status_cmd = read32(pcie->map + space + 0x04);
+	status_cmd |= (1 << 2) | (1 << 1); // Enable Bus Mastering and Memory Space Access
+	status_cmd &= ~(1 << 10); // Enable interupts
+	write32(pcie->map + space + 0x04, status_cmd);
+
+	u32 bar0 = read32(pcie->map + space + 0x10);
+	u32 bar1 = read32(pcie->map + space + 0x14);
+	if(bar1) {
+		pcie_unmap_config_space(pcie);
+		return -EFAULT;
 	}
 
-	return -ENODEV;
-found_device:
+	//kmem_map_phy_addr(bar0, size, PAGE_FLAG_RW);
 
 	return 0;
 }
