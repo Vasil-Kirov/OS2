@@ -103,7 +103,7 @@ int kint_setup_interrupts(RSDP *rsdp)
 
 	uintptr_t apic_base_phy = cpu_get_apic_base();
 	cpu_set_apic_base(apic_base_phy);
-	lapic = kmem_map_phy_addr(apic_base_phy, 0x1000, PAGE_FLAG_RW);
+	lapic = kmem_map_phy_addr(apic_base_phy, 0x1000, PAGE_FLAG_MMIO);
 	if(!lapic)
 		return -ENOMEM;
 
@@ -114,7 +114,7 @@ int kint_setup_interrupts(RSDP *rsdp)
 		goto err_unmap_local_apic;
 	}
 
-	MADT *madt = kmem_map_phy_addr(phy_apic_table, table_length, PAGE_FLAG_RW);
+	MADT *madt = kmem_map_phy_addr(phy_apic_table, table_length, PAGE_FLAG_MMIO);
 	if(madt->local_apic_addr != apic_base_phy) {
 		// @TODO: Warning?
 	}
@@ -146,7 +146,7 @@ int kint_setup_interrupts(RSDP *rsdp)
 	}
 
 	size_t io_size = 0x40;
-	ioapic = kmem_map_phy_addr(io_apic_phy, 0x1000, PAGE_FLAG_RW);
+	ioapic = kmem_map_phy_addr(io_apic_phy, 0x1000, PAGE_FLAG_MMIO);
 	if(!ioapic) {
 		ret = -ENOMEM;
 		goto err_unmap_madt;

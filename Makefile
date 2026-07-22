@@ -18,6 +18,7 @@ LIBK_OBJS := \
 	     $(BUILD_DIR)/strlen.o \
 	     $(BUILD_DIR)/memcmp.o \
 	     $(BUILD_DIR)/memcpy.o \
+	     $(BUILD_DIR)/memset.o \
 
 
 OBJS= \
@@ -144,5 +145,8 @@ $(BUILD_DIR)/memcmp.o: $(SRC_DIR)/libc/string/memcmp.c
 	$(CC) $(LIBK_CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/memcpy.o: $(SRC_DIR)/libc/string/memcpy.c
+	$(CC) $(LIBK_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/memset.o: $(SRC_DIR)/libc/string/memset.c
 	$(CC) $(LIBK_CFLAGS) -c $< -o $@
 

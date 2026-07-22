@@ -1,5 +1,6 @@
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 #include "kmem.h"
 
 
@@ -24,7 +25,14 @@ typedef struct KmemPhysicalFreeList {
 typedef struct {
 	KmemPhysicalFreeListNode *freelist;
 	size_t size;
-} KmemMapSignature ;
+} KmemMapSignature;
+
+typedef struct {
+	uintptr_t physical_address;
+	void *virtual_addr;
+	KmemMapSignature sig;
+	bool unmapped;
+} DMAPageInfo;
 
 KmemPhysicalFreeListNode initial_freelist_mem[128];
 
@@ -98,6 +106,9 @@ void *kmem_map_phy_addr(uintptr_t physical_address, size_t size, uint16_t flags)
 
 void kmem_unmap_raw(void *virtual_address, size_t size)
 {
+	if(virtual_address == NULL)
+		return;
+
 	void *page_start = (void *)((uintptr_t)virtual_address & ~0xFFF);
 	size_t offset = virtual_address - page_start;
 	size += offset;
@@ -138,16 +149,16 @@ void kmem_make_phy_page_table(multiboot_mmap_entry *mb_physical_mmap, u32 mb_phy
 		size_t size = mb_physical_mmap[i].length;
 		if(addr < PAGE_SIZE * 1024) {
 			size_t to_offset = PAGE_SIZE * 1024 - addr;
-			if(size < to_offset)
+			if(size <= to_offset)
 				continue;
 			size -= to_offset;
 			addr += to_offset;
 		}
 
-		uintptr_t aligned_addr = ALIGN_UP(addr, 0x1000);
+		uintptr_t aligned_addr = ALIGN_UP(addr, PAGE_SIZE);
 		size_t offset = aligned_addr - addr;
 
-		if(size < offset || size - offset < PAGE_SIZE)
+		if(size <= offset || size - offset < PAGE_SIZE)
 			continue;
 
 		at->address = aligned_addr;
@@ -157,7 +168,104 @@ void kmem_make_phy_page_table(multiboot_mmap_entry *mb_physical_mmap, u32 mb_phy
 	}
 }
 
-void *kmem_map(size_t size)
+#define __DMA_MAX_PAGES 8192
+DMAPageInfo __dma_pages[__DMA_MAX_PAGES] = {};
+size_t __dma_page_count = 0;
+
+void dma_unmap(uintptr_t phy_addr)
+{
+	for(size_t i = 0; i < __dma_page_count; ++i)
+	{
+		if (__dma_pages[i].physical_address == phy_addr)
+		{
+			__dma_pages[i].unmapped = true;
+			break;
+		}
+	}
+}
+
+bool dma_map(size_t size, void **virtual_addr, uintptr_t *phy_addr)
+{
+	if(size == 0) {
+		if(virtual_addr)
+			*virtual_addr = NULL;
+		if(phy_addr)
+			*phy_addr = 0;
+		return true;
+	}
+	if (__dma_page_count >= 4096)
+		return false;
+
+	size = ALIGN_UP(size, PAGE_SIZE);
+	for(size_t i = 0; i < __dma_page_count; ++i)
+	{
+		if (__dma_pages[i].unmapped && __dma_pages[i].sig.size == size)
+		{
+			__dma_pages[i].unmapped = false;
+			if(virtual_addr)
+				*virtual_addr = __dma_pages[i].virtual_addr;
+			if(phy_addr)
+				*phy_addr = __dma_pages[i].physical_address;
+			return true;
+		}
+	}
+	for(size_t i = 0; i < __dma_page_count; ++i)
+	{
+		if (__dma_pages[i].unmapped && __dma_pages[i].sig.size >= size)
+		{
+			__dma_pages[i].unmapped = false;
+			if(virtual_addr)
+				*virtual_addr = __dma_pages[i].virtual_addr;
+			if(phy_addr)
+				*phy_addr = __dma_pages[i].physical_address;
+			return true;
+		}
+	}
+
+	KmemPhysicalFreeListNode *at = physical_free_list.head;
+	if(__dma_page_count >= __DMA_MAX_PAGES)
+		return false;
+	while(at) {
+		if(at->address == 0)
+			continue;
+		if(at->offset >= at->size || at->offset - at->size < PAGE_SIZE)
+			continue;
+		if(size > at->size - at->offset)
+			continue;
+		uintptr_t address = at->address+at->offset;
+		assert(address % PAGE_SIZE == 0);
+
+		DMAPageInfo page = {};
+		page.physical_address = address;
+		page.virtual_addr = kmem_map_phy_addr(address, size, PAGE_FLAG_MMIO);
+		at->offset += size;
+
+		if(at->size - at->offset == 0) {
+			if(at != physical_free_list.tail) {
+				if(at->prev)
+					at->prev->next = at->next;
+				if(at->next)
+					at->next->prev = at->prev;
+				physical_free_list.tail->next = at;
+				at->prev = physical_free_list.tail;
+				physical_free_list.tail = at;
+			}
+		}
+		page.sig.size = size;
+		page.sig.freelist = at;
+		page.unmapped = false;
+		if(virtual_addr)
+			*virtual_addr = page.virtual_addr;
+		if(phy_addr)
+			*phy_addr = page.physical_address;
+		__dma_pages[__dma_page_count++] = page;
+		memset(page.virtual_addr, 0, size);
+		return true;
+	}
+	return false;
+}
+
+void *kmem_map(size_t size, u32 flags)
 {
 	if(size == 0)
 		return NULL;
@@ -173,11 +281,11 @@ void *kmem_map(size_t size)
 			u32 page_start = address & ~0xFFF;
 			u32 offset = address - page_start;
 			size_t real_size = size + offset;
-			real_size = ALIGN_UP(real_size, 0x1000);
+			real_size = ALIGN_UP(real_size, PAGE_SIZE);
 			if(at->size - at->offset < real_size)
 				continue;
 
-			KmemMapSignature *signature = kmem_map_phy_addr(address, size, 0x3);
+			KmemMapSignature *signature = kmem_map_phy_addr(address, size, flags);
 			at->offset += real_size;
 			
 			if(at->size - at->offset == 0) {
@@ -204,6 +312,7 @@ void *kmem_map(size_t size)
 
 void kmem_unmap(void *ptr)
 {
+	// @TODO:
 	if(!ptr)
 		return;
 

@@ -13,7 +13,7 @@
 
 PCIe *pcie_init(RSDP *rsdp)
 {
-	PCIe *pcie = kmem_map(sizeof(*pcie));
+	PCIe *pcie = kmem_map(sizeof(*pcie), PAGE_FLAG_RW);
 	if(!pcie)
 		return NULL;
 
@@ -24,7 +24,7 @@ PCIe *pcie_init(RSDP *rsdp)
 		return NULL;
 	}
 
-	pcie->mcfg = kmem_map_phy_addr(mcfg_phy_addr, mcfg_size, PAGE_FLAG_RW);
+	pcie->mcfg = kmem_map_phy_addr(mcfg_phy_addr, mcfg_size, PAGE_FLAG_MMIO);
 	if(!pcie->mcfg) {
 		kmem_unmap(pcie);
 		return NULL;
@@ -53,7 +53,7 @@ bool pcie_map_config_space(PCIe *pcie, u8 bus)
 	for(size_t i = 0; i < pcie->entry_count; ++i) {
 		if(pcie->mcfg->addrs[i].start_bus <= bus && pcie->mcfg->addrs[i].end_bus >= bus) {
 			MCFG_ConfigSpace *cfg = &pcie->mcfg->addrs[i];
-			pcie->map = kmem_map_phy_addr(cfg->base_addr, PCIE_SPACE_SIZE, PAGE_FLAG_RW);
+			pcie->map = kmem_map_phy_addr(cfg->base_addr, PCIE_SPACE_SIZE, PAGE_FLAG_MMIO);
 			if(!pcie->map)
 				return false;
 			pcie->mapped_entry = i;
@@ -76,7 +76,7 @@ bool pcie_read(PCIe *pcie, u8 bus, u8 dev, u8 fn, void *buf, size_t size)
 				mapped = pcie->map + (((bus-cfg->start_bus) << 20) | (dev << 15) | (fn << 12));
 			} else {
 				uintptr_t addr = cfg->base_addr + (((bus-cfg->start_bus) << 20) | (dev << 15) | (fn << 12));
-				mapped = kmem_map_phy_addr(addr, size, PAGE_FLAG_RW);
+				mapped = kmem_map_phy_addr(addr, size, PAGE_FLAG_MMIO);
 			}
 
 			if(!mapped)

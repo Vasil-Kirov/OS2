@@ -44,6 +44,7 @@ void kernel_main(uint32_t magic, multiboot_info *mb_info)
 		}
 		tag = (multiboot_tag *)(ALIGN_UP((uintptr_t)tag + tag->size, 8));
 	}
+	(void)acpin_tag;
 
 	if(!fb_tag || !mmap_tag || !acpio_tag)
 		panic("Failed to find all tags!");
@@ -52,7 +53,7 @@ void kernel_main(uint32_t magic, multiboot_info *mb_info)
 
 	// @TODO: Task Segment
 	size_t gdt_seg_count = 5;
-	GDT_Segment *seg = kmem_map(sizeof(GDT_Segment) * gdt_seg_count);
+	GDT_Segment *seg = kmem_map(sizeof(GDT_Segment) * gdt_seg_count, PAGE_FLAG_MMIO);
 	if(!seg)
 		panic("Failed to allocate memory for GDT segments!");
 
@@ -69,11 +70,8 @@ void kernel_main(uint32_t magic, multiboot_info *mb_info)
 
 	kgdt_set((uintptr_t)seg, gdt_seg_count * sizeof(GDT_Segment) - 1);
 
-	kint_setup_idt();
+	kint_setup_interrupts(&acpio_tag->rsdp);
 
-	*(u32 *)1 = 10;
-
-	(void)acpin_tag;
 	if(!rsdp_check_header(&acpio_tag->rsdp))
 		panic("Invalid RSDP header!");
 
@@ -81,16 +79,37 @@ void kernel_main(uint32_t magic, multiboot_info *mb_info)
 	if(!pci)
 		panic("Failed to init PCIe!");
 
-	int nvme_res = nvme_init(pci);
+	NVMeDevice nvme;
+	int nvme_res = nvme_init(pci, &nvme);
+	if(nvme_res != 0)
+		panic("Failed to init NVMe!");
+
+	u8 *nvme_data = NULL;
+	uintptr_t nvme_buf = 0;
+	if(dma_map(PAGE_SIZE, (void **)&nvme_data, &nvme_buf)) {
+		int block_count = PAGE_SIZE / nvme.ns_infos[0].block_size;
+		int lba = 0;
+		for(int i = 0; i < 16; ++i)
+		{
+			memset(nvme_data, 0xAC, PAGE_SIZE);
+			nvme_write(&nvme, 1, lba, block_count, nvme_buf);
+			memset(nvme_data, 0x0, PAGE_SIZE);
+			nvme_read(&nvme, 1, lba, block_count, nvme_buf);
+			lba += block_count;
+		}
+	}
 
 
-	u32 *color = kmem_map(sizeof(u32));
+	u32 *color = kmem_map(sizeof(u32), PAGE_FLAG_RW);
 	if(!color)
 		panic("Failed to map kernel memory!");
 
 	*color = 0x0000FFFF;
 
-	uint32_t *framebuffer = kmem_map_phy_addr(fb_tag->framebuffer_addr, fb_tag->framebuffer_width * fb_tag->framebuffer_height * 4, 0x3);
+	// @Note: Maybe it should be MMIO, but not using cache on framebuffer writes
+	// sounds very bad for performance, so maybe just find a way to flush it
+	// Vasko - 22/07/2026
+	uint32_t *framebuffer = kmem_map_phy_addr(fb_tag->framebuffer_addr, fb_tag->framebuffer_width * fb_tag->framebuffer_height * 4, PAGE_FLAG_RW);
 	for(;;) {
 		uint32_t *buffer = framebuffer;
 		for(u32 y = 0; y < fb_tag->framebuffer_height/2; ++y) {

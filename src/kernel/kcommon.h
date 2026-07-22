@@ -4,6 +4,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 
 typedef uint8_t u8;
 typedef uint16_t u16;
@@ -21,6 +22,11 @@ typedef int64_t i64;
 #define ALIGN_DOWN(x, a) ((x) & ~((typeof(x))(a) - 1))
 
 #define ARRAY_COUNT(arr) (sizeof((arr)) / sizeof((arr)[0]))
+
+#define __STRINGIFY_(n) #n
+#define __STRINGIFY(n) __STRINGIFY_(n)
+#define assert(expr) do { if(!(expr)) { panic("Assertion failed in at" __FILE__ "(" __STRINGIFY(__LINE__) ")!"); } } while(false)
+#define static_assert _Static_assert
 
 __attribute__ ((noreturn)) 
 void panic(const char *msg);
@@ -44,6 +50,20 @@ static inline void write32(void volatile *mem, u32 dword)
 {
 	*(u32 volatile *)mem = dword;
 }
+
+static inline u64 read64(void volatile *mem)
+{
+	return *(u64 volatile *)mem;
+}
+
+static inline void write64(void volatile *mem, u64 qword)
+{
+	*(u64 volatile *)mem = qword;
+}
+
+int memcmp(const void *p1, const void *p2, size_t num);
+void *memcpy(void *dst, const void *src, size_t num);
+void *memset(void *dst, int val, size_t size);
 
 #endif
 

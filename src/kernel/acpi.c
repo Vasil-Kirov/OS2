@@ -19,12 +19,12 @@ uintptr_t rsdp_find_table(RSDP *rsdp, char table_name[4], u32 *length_out)
 
 	uintptr_t found = 0;
 
-	ACPISDTHeader *root_header = kmem_map_phy_addr(rsdp->RsdtAddress, sizeof(*root_header), PAGE_FLAG_RW);
+	ACPISDTHeader *root_header = kmem_map_phy_addr(rsdp->RsdtAddress, sizeof(*root_header), PAGE_FLAG_MMIO);
 
 	size_t addrs_size = (root_header->Length - sizeof(*root_header));
-	u32 *addresses = kmem_map_phy_addr(rsdp->RsdtAddress + sizeof(*root_header), addrs_size, PAGE_FLAG_RW);
+	u32 *addresses = kmem_map_phy_addr(rsdp->RsdtAddress + sizeof(*root_header), addrs_size, PAGE_FLAG_MMIO);
 	for(size_t i = 0; i < addrs_size / 4 && found == 0; ++i) {
-		ACPISDTHeader *header = kmem_map_phy_addr(addresses[i], sizeof(*header), PAGE_FLAG_RW);
+		ACPISDTHeader *header = kmem_map_phy_addr(addresses[i], sizeof(*header), PAGE_FLAG_MMIO);
 
 		if(memcmp(header->Signature, table_name, 4) == 0) {
 			*length_out = header->Length;
