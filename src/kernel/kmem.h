@@ -2,7 +2,7 @@
 #ifndef _KMEM_H
 #define _KMEM_H
 
-#define KERNEL_OFFSET (0xC0000000)
+#define KERNEL_OFFSET ((uintptr_t)0xC0000000)
 #define PAGE_SIZE (0x1000)
 
 #include "kcommon.h"
@@ -24,6 +24,11 @@ void dma_unmap(uintptr_t phy_addr);
 #define PAGE_FLAG_CD (1 << 4)
 
 #define PAGE_FLAG_MMIO (PAGE_FLAG_WT | PAGE_FLAG_CD | PAGE_FLAG_RW)
+
+
+#define KB(n) ((n) << 10)
+#define MB(n) ((n) << 20)
+#define GB(n) ((n) << 30)
 
 
 #endif // _KMEM_H

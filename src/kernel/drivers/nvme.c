@@ -363,6 +363,7 @@ found_device:
 		goto error_free_io_queue;
 	}
 
+	pcie_unmap_config_space(pcie);
 	return 0;
 
 error_free_io_queue:

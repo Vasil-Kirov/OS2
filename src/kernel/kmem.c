@@ -225,7 +225,7 @@ bool dma_map(size_t size, void **virtual_addr, uintptr_t *phy_addr)
 	KmemPhysicalFreeListNode *at = physical_free_list.head;
 	if(__dma_page_count >= __DMA_MAX_PAGES)
 		return false;
-	while(at) {
+	for(; at; at = at->next) {
 		if(at->address == 0)
 			continue;
 		if(at->offset >= at->size || at->offset - at->size < PAGE_SIZE)
@@ -272,7 +272,7 @@ void *kmem_map(size_t size, u32 flags)
 
 	size += sizeof(KmemMapSignature);
 	KmemPhysicalFreeListNode *at = physical_free_list.head;
-	while(at) {
+	for(; at; at = at->next) {
 		if(at->address == 0)
 			continue;
 
@@ -304,7 +304,6 @@ void *kmem_map(size_t size, u32 flags)
 			return signature + 1;
 
 		}
-		at = at->next;
 	}
 
 	return NULL;

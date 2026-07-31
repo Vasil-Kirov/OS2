@@ -1,10 +1,18 @@
 
 
+global in8
 global in32
 global out8
 global out32
 
 section .text
+
+; cx = port
+in8:
+	xor eax, eax
+	mov dx, cx
+	in al, dx
+	ret
 
 ; cx = port
 in32:

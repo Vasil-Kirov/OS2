@@ -2,17 +2,23 @@ SRC_DIR=src
 BUILD_DIR=bin
 
 ARCH=i686
+
 AS=nasm
 AR=$(ARCH)-elf-ar
 CC=$(ARCH)-elf-gcc
-ARCHDIR=$(SRC_DIR)/kernel/arch/$(ARCH)
-ASM_FLAGS=-felf32
-CFLAGS=-g -O0 -ffreestanding -Wall -Wextra -isystem=/usr/include -static -fno-pie
+
 SYSROOT=$(PWD)/sysroot
+ARCHDIR=$(SRC_DIR)/kernel/arch/$(ARCH)
+
+ASM_FLAGS=-felf32
+
+CFLAGS=-g -O0 -ffreestanding -Wall -Wextra -isystem=/usr/include -static -fno-pie
 KERNEL_CFLAGS:=$(CFLAGS) --sysroot=$(SYSROOT) -I$(SRC_DIR)/kernel -I$(ARCHDIR)
 LIBK_CFLAGS:=$(CFLAGS) -D__is_libk --sysroot=$(SYSROOT)
+
 ISO=$(BUILD_DIR)/VOS.iso
-QEMU_FLAGS=-cdrom $(ISO) -device nvme,drive=nvme0,serial=nvme0 -drive file=disk.qcow2,if=none,id=nvme0,format=qcow2 -machine q35,acpi=on
+
+QEMU_FLAGS=-cdrom $(ISO) -device nvme,drive=nvme0,serial=nvme0 -drive file=disk.qcow2,if=none,id=nvme0,format=qcow2 -machine q35,acpi=on -serial stdio
 
 LIBK_OBJS := \
 	     $(BUILD_DIR)/strlen.o \
@@ -28,10 +34,15 @@ OBJS= \
 	  $(BUILD_DIR)/kmem.o \
 	  $(BUILD_DIR)/io.o \
 	  $(BUILD_DIR)/pci.o \
+	  $(BUILD_DIR)/kprintf.o \
+	  $(BUILD_DIR)/kmalloc.o \
 	  $(BUILD_DIR)/nvme.o \
+	  $(BUILD_DIR)/block.o \
+	  $(BUILD_DIR)/ext2.o \
 	  $(BUILD_DIR)/acpi.o \
 	  $(BUILD_DIR)/gdt.o \
 	  $(BUILD_DIR)/interrupts.o \
+	  $(BUILD_DIR)/serial.o \
 	  $(BUILD_DIR)/int_table.o \
 	  $(BUILD_DIR)/crtn.o \
 	  #$(BUILD_DIR)/asmfn.o \
@@ -44,7 +55,7 @@ HEADERS=$(SRC_DIR)/kernel/include/kernel \
 .PHONY = all image kernel clean install install-headers install-kernel install-libs
 
 verify: $(BUILD_DIR)/VOS.bin
-	@if grub-file --is-x86-multiboot $(BUILD_DIR)/VOS.bin; then \
+	@if grub-file --is-x86-multiboot2 $(BUILD_DIR)/VOS.bin; then \
 		echo "Confirmed!"; \
 	else \
 		echo "Invalid Multiboot."; \
@@ -83,7 +94,10 @@ $(ISO): $(BUILD_DIR)/VOS.bin
 	grub-mkrescue -o $(ISO) $(BUILD_DIR)/isodir
 
 $(BUILD_DIR)/VOS.bin: $(SYSROOT) $(OBJS) $(SYSROOT)/usr/lib/libk.a
-	$(CC) --sysroot=$(SYSROOT) -nostdlib -T linker.ld $(OBJS) -o $(BUILD_DIR)/VOS.bin -lk
+	$(CC) --sysroot=$(SYSROOT) -nostdlib -T linker.ld $(OBJS) -o $(BUILD_DIR)/VOS.bin -lk -lgcc
+
+clean_bin:
+	rm -rf $(BUILD_DIR)/*
 
 clean:
 	rm -rf $(BUILD_DIR)
@@ -114,13 +128,28 @@ $(BUILD_DIR)/kmem.o: $(SRC_DIR)/kernel/kmem.c
 $(BUILD_DIR)/pci.o: $(SRC_DIR)/kernel/pci.c
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/kprintf.o: $(SRC_DIR)/kernel/kprintf.c
+	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kmalloc.o: $(SRC_DIR)/kernel/kmalloc.c
+	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+
 $(BUILD_DIR)/acpi.o: $(SRC_DIR)/kernel/acpi.c
+	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/block.o: $(SRC_DIR)/kernel/block.c
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/nvme.o: $(SRC_DIR)/kernel/drivers/nvme.c
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/ext2.o: $(SRC_DIR)/kernel/drivers/ext2.c
+	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+
 $(BUILD_DIR)/gdt.o: $(SRC_DIR)/kernel/gdt.c
+	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/serial.o: $(ARCHDIR)/serial.c
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/interrupts.o: $(ARCHDIR)/interrupts.c

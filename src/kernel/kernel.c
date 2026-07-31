@@ -1,10 +1,15 @@
+#include <kprintf.h>
+#include <serial.h>
 #include <kmem.h>
+#include <kmalloc.h>
 #include <multiboot.h>
 #include <acpi.h>
 #include <pci.h>
 #include <gdt.h>
 #include <interrupts.h>
 #include <drivers/nvme.h>
+#include <block.h>
+#include <drivers/ext2.h>
 
 __attribute__ ((noreturn)) 
 void panic(const char *msg)
@@ -14,6 +19,19 @@ void panic(const char *msg)
 		;
 }
 
+bool pcie_print_dev(PCIeDevDesc *dev, void *)
+{
+	const char *class_name = pcie_class_name(dev->class);
+	size_t name_len = strlen(class_name);
+	char pad[128] = {};
+	for (size_t i = 0; i < ARRAY_COUNT(pad); ++i) {
+		if (name_len+i > 32)
+			break;
+		pad[i] = ' ';
+	}
+	kprintf("\t%s%s| %s", class_name, pad, pcie_subclass_name(dev->class, dev->subclass));
+	return false;
+}
 
 void kernel_main(uint32_t magic, multiboot_info *mb_info) 
 {
@@ -49,8 +67,17 @@ void kernel_main(uint32_t magic, multiboot_info *mb_info)
 	if(!fb_tag || !mmap_tag || !acpio_tag)
 		panic("Failed to find all tags!");
 
+	if (init_serial() != 0)
+		panic("Failed to init serial!");
+	kprint_console.write_char = serial_write;
+
+	kprintf("Initializing page table...");
 	kmem_init(mmap_tag);
 
+	kprintf("Initializing kernel heap...");
+	kinit_heap();
+
+	kprintf("Setting up GDT...");
 	// @TODO: Task Segment
 	size_t gdt_seg_count = 5;
 	GDT_Segment *seg = kmem_map(sizeof(GDT_Segment) * gdt_seg_count, PAGE_FLAG_MMIO);
@@ -70,36 +97,36 @@ void kernel_main(uint32_t magic, multiboot_info *mb_info)
 
 	kgdt_set((uintptr_t)seg, gdt_seg_count * sizeof(GDT_Segment) - 1);
 
+	kprintf("Setting up interrupts...");
 	kint_setup_interrupts(&acpio_tag->rsdp);
 
 	if(!rsdp_check_header(&acpio_tag->rsdp))
 		panic("Invalid RSDP header!");
 
+	kprintf("Initializing PCIe...");
 	PCIe *pci = pcie_init(&acpio_tag->rsdp);
 	if(!pci)
 		panic("Failed to init PCIe!");
 
-	NVMeDevice nvme;
+	kprintf("PCIe devices:");
+	pcie_iterate_entries(pci, pcie_print_dev, NULL);
+
+	kprintf("Initializing NVMe driver...");
+	NVMeDevice nvme = {};
 	int nvme_res = nvme_init(pci, &nvme);
 	if(nvme_res != 0)
 		panic("Failed to init NVMe!");
 
-	u8 *nvme_data = NULL;
-	uintptr_t nvme_buf = 0;
-	if(dma_map(PAGE_SIZE, (void **)&nvme_data, &nvme_buf)) {
-		int block_count = PAGE_SIZE / nvme.ns_infos[0].block_size;
-		int lba = 0;
-		for(int i = 0; i < 16; ++i)
-		{
-			memset(nvme_data, 0xAC, PAGE_SIZE);
-			nvme_write(&nvme, 1, lba, block_count, nvme_buf);
-			memset(nvme_data, 0x0, PAGE_SIZE);
-			nvme_read(&nvme, 1, lba, block_count, nvme_buf);
-			lba += block_count;
-		}
-	}
+	kprintf("Initializing block device...");
+	BlockDevice blk = {};
+	block_from_nvme(&blk, &nvme);
 
+	kprintf("Initializing file system...");
+	Ext2FS fs = {};
+	ext2_init(&fs, &blk);
+	//ext2_read_root(&fs);
 
+	kprintf("Kernel initialized!");
 	u32 *color = kmem_map(sizeof(u32), PAGE_FLAG_RW);
 	if(!color)
 		panic("Failed to map kernel memory!");

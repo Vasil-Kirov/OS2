@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <string.h>
 
 typedef uint8_t u8;
 typedef uint16_t u16;
@@ -16,10 +17,16 @@ typedef int16_t i16;
 typedef int32_t i32;
 typedef int64_t i64;
 
+typedef struct {
+	size_t count;
+	const char *data;
+} string_view;
+
 //typedef _Bool bool;
 
 #define ALIGN_UP(x, a) (((x) + (a) - 1) & ~((typeof(x))(a) - 1))
 #define ALIGN_DOWN(x, a) ((x) & ~((typeof(x))(a) - 1))
+#define INT_CEIL_DIV(x, y) (((x) + (y) - 1) / (y))
 
 #define ARRAY_COUNT(arr) (sizeof((arr)) / sizeof((arr)[0]))
 
@@ -30,6 +37,13 @@ typedef int64_t i64;
 
 __attribute__ ((noreturn)) 
 void panic(const char *msg);
+
+static inline bool str_compare(string_view *a, string_view *b)
+{
+	if(a->count != b->count)
+		return false;
+	return memcmp(a->data, b->data, b->count) == 0;
+}
 
 static inline u8 read8(void volatile *mem)
 {

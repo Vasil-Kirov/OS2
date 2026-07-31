@@ -1,4 +1,3 @@
-
 #include "pci.h"
 
 #include <string.h>
@@ -6,6 +5,7 @@
 #include <io.h>
 #include <acpi.h>
 #include <kmem.h>
+#include <errno.h>
 
 #define CONFIG_ADDRESS (0xCF8)
 #define CONFIG_DATA (0xCFC)
@@ -37,6 +37,182 @@ PCIe *pcie_init(RSDP *rsdp)
 	return pcie;
 }
 
+const char *pcie_class_name(u8 class)
+{
+	switch (class)
+	{
+		case 0x00:
+			return "Unclassified";
+		case 0x01:
+			return "Mass Storage Controller";
+		case 0x02:
+			return "Network Controller";
+		case 0x03:
+			return "Display Controller";
+		case 0x04:
+			return "Multimedia Controller";
+		case 0x05:
+			return "Memory Controller";
+		case 0x06:
+			return "Bridge Device";
+		case 0x07:
+			return "Simple Communication Controller";
+		case 0x08:
+			return "Base System Peripheral";
+		case 0x09:
+			return "Input Device Controller";
+		case 0x0A:
+			return "Docking Station";
+		case 0x0B:
+			return "Processor";
+		case 0x0C:
+			return "Serial Bus Controller";
+		case 0x0D:
+			return "Wireless Controller";
+		case 0x0E:
+			return "Intelligent I/O Controller";
+		case 0x0F:
+			return "Satellite Communication Controller";
+		case 0x10:
+			return "Encryption Controller";
+		case 0x11:
+			return "Signal Processing Controller";
+		case 0x12:
+			return "Processing Accelerator";
+		case 0x13:
+			return "Non-Essential Instrumentation";
+		case 0x40:
+			return "Co-Processor";
+		default:
+			return "Unknown";
+	}
+}
+
+const char *pcie_subclass_name(u8 class, u8 subclass)
+{
+	switch (class)
+	{
+		case 0x01: // Mass Storage Controller
+			switch (subclass)
+			{
+				case 0x00: return "SCSI";
+				case 0x01: return "IDE";
+				case 0x02: return "Floppy Disk Controller";
+				case 0x03: return "IPI Bus Controller";
+				case 0x04: return "RAID Controller";
+				case 0x05: return "ATA Controller";
+				case 0x06: return "SATA Controller";
+				case 0x07: return "Serial Attached SCSI";
+				case 0x08: return "NVM Express";
+				case 0x80: return "Other";
+				default:   return "Unknown";
+			}
+
+		case 0x02: // Network Controller
+			switch (subclass)
+			{
+				case 0x00: return "Ethernet Controller";
+				case 0x01: return "Token Ring Controller";
+				case 0x02: return "FDDI Controller";
+				case 0x03: return "ATM Controller";
+				case 0x04: return "ISDN Controller";
+				case 0x05: return "WorldFIP Controller";
+				case 0x06: return "PICMG 2.14 Multi Computing";
+				case 0x80: return "Other";
+				default:   return "Unknown";
+			}
+
+		case 0x03: // Display Controller
+			switch (subclass)
+			{
+				case 0x00: return "VGA Compatible Controller";
+				case 0x01: return "XGA Controller";
+				case 0x02: return "3D Controller";
+				case 0x80: return "Other";
+				default:   return "Unknown";
+			}
+
+		case 0x06: // Bridge Device
+			switch (subclass)
+			{
+				case 0x00: return "Host Bridge";
+				case 0x01: return "ISA Bridge";
+				case 0x02: return "EISA Bridge";
+				case 0x03: return "MCA Bridge";
+				case 0x04: return "PCI-to-PCI Bridge";
+				case 0x05: return "PCMCIA Bridge";
+				case 0x06: return "NuBus Bridge";
+				case 0x07: return "CardBus Bridge";
+				case 0x08: return "RACEway Bridge";
+				case 0x09: return "PCI-to-PCI Bridge (Semi-transparent)";
+				case 0x0A: return "InfiniBand-to-PCI Host Bridge";
+				case 0x80: return "Other";
+				default:   return "Unknown";
+			}
+
+		case 0x0C: // Serial Bus Controller
+			switch (subclass)
+			{
+				case 0x00: return "FireWire";
+				case 0x01: return "ACCESS Bus";
+				case 0x02: return "SSA";
+				case 0x03: return "USB Controller";
+				case 0x04: return "Fibre Channel";
+				case 0x05: return "SMBus";
+				case 0x06: return "InfiniBand";
+				case 0x07: return "IPMI";
+				case 0x08: return "SERCOS Interface";
+				case 0x09: return "CANbus";
+				case 0x80: return "Other";
+				default:   return "Unknown";
+			}
+
+		default:
+			return "Unknown";
+	}
+}
+
+int pcie_iterate_entries(PCIe *pcie, PCIeItCallback cb, void *arg)
+{
+	if (!cb)
+		return -EINVAL;
+
+	MCFG_ConfigSpace *cfg = NULL;
+	for (size_t i = 0; i < pcie->entry_count; ++i) {
+		cfg = &pcie->mcfg->addrs[i];
+		if (!pcie_map_config_space(pcie, cfg->start_bus))
+			return -ENOMEM;
+
+		for (int bus = cfg->start_bus; bus <= cfg->end_bus; ++bus) {
+			for(int dev = 0; dev < 32; ++dev) {
+				for(int fn = 0; fn < 8; ++fn) {
+					size_t space = pcie_bus_offset(cfg->start_bus, bus, dev, fn);
+					u16 vendor_id = read16(pcie->map + space);
+
+					// Invalid ID
+					if(vendor_id == 0xFFFF)
+						continue;
+
+					u32 data = read32(pcie->map + space + 0x8);
+					u8 class = data >> 24;
+					u8 subclass = (data >> 16) & 0xFF;
+
+					PCIeDevDesc desc = {bus, dev, fn, vendor_id, class, subclass}; 
+					if (cb(&desc, arg))
+						goto early_exit;
+				}
+			}
+		}
+
+		pcie_unmap_config_space(pcie);
+	}
+	return 0;
+
+early_exit:
+	pcie_unmap_config_space(pcie);
+	return 0;
+}
+
 void pcie_unmap_config_space(PCIe *pcie)
 {
 	if(!pcie->map)
@@ -56,7 +232,7 @@ bool pcie_map_config_space(PCIe *pcie, u8 bus)
 			pcie->map = kmem_map_phy_addr(cfg->base_addr, PCIE_SPACE_SIZE, PAGE_FLAG_MMIO);
 			if(!pcie->map)
 				return false;
-			pcie->mapped_entry = i;
+			pcie->mapped_entry = (int)i;
 			return true;
 		}
 	}
@@ -84,7 +260,7 @@ bool pcie_read(PCIe *pcie, u8 bus, u8 dev, u8 fn, void *buf, size_t size)
 
 			memcpy(buf, mapped, size);
 
-			if(i != pcie->mapped_entry)
+			if((int)i != pcie->mapped_entry)
 				kmem_unmap_raw(mapped, size);
 
 			return true;

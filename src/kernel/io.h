@@ -5,6 +5,7 @@
 #include "kcommon.h"
 
 
+u8 in8(u16 port) __attribute__((fastcall));
 u32 in32(u16 port) __attribute__((fastcall));
 
 void out8(u16 port, u8 byte) __attribute__((fastcall));
