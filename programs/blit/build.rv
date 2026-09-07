@@ -1,0 +1,41 @@
+module build;
+
+_ :: #import compile;
+_ :: #import misc;
+_ :: #import io;
+#import mem;
+#import str;
+
+system :: fn(cmd: *u8) -> i32 #foreign;
+
+compile :: fn() -> CompileInfo {
+	return .{
+		files = .{"main.rv"},
+		source_dirs = []string {"../src" },
+        opt = 0,
+        flags = .DebugInfo | .NoLink | .Standalone | .NoLibC | .DisableBoundsCheck,
+		entry_point = "main",
+		arch = .x86,
+
+		target_triple = "i386-unknown-elf",
+		internals_file = "../../internal.rv",
+	};
+}
+
+
+after_link :: fn(objs: []string) {
+
+	b := str.create_builder(&mem.temp_alloc);
+	str.builder_append(&b, "ld.lld -m elf_i386 -static -nostdlib -o init ");
+	for obj in objs {
+		str.builder_append(&b, obj);
+		str.builder_append(&b, " ");
+	}
+	str.builder_append(&b, "../../syscall.o");
+
+	cmd := str.from_builder(&b, &mem.temp_alloc);
+	println("cmd: %", cmd);
+	system(cmd.data);
+	system(c"move init ../../../mnt/init");
+}
+

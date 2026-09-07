@@ -1,0 +1,36 @@
+module internal;
+
+
+deref :: fn(pos: *u8) -> u32 {
+	// stub;
+	return 0;
+}
+
+print :: fn(buf: *u8, count: int) -> int {
+	// stub;
+	return 0;
+}
+
+abort :: fn() {
+	// stub;
+	for {
+	}
+}
+
+str_get_codepoint_size :: fn(codepoint: *u8) -> int {
+    p := codepoint;
+	SIZE4 :: 0b1111_0000 as u8;
+	SIZE3 :: 0b1110_0000 as u8;
+	SIZE2 :: 0b1100_0000 as u8;
+	if *p & SIZE4 == SIZE4 return 4;
+	if *p & SIZE3 == SIZE3 return 3;
+	if *p & SIZE2 == SIZE2 return 2;
+	return 1;
+}
+
+advance :: fn(pos: *u8) -> *u8 {
+    size := str_get_codepoint_size(pos);
+    p := pos;
+    return &p[size];
+}
+
