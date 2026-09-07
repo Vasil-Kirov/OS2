@@ -2,6 +2,7 @@ bin/**
 sysroot/**
 disk.qcow2
 disk.img
+mnt/**
 
 # Prerequisites
 *.d
