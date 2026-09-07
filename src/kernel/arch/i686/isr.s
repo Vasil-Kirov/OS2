@@ -18,7 +18,7 @@ isr_stub_%+%1:
 extern interrupt_handler
 
 isr_common:
-    pusha                  ; edi esi ebp esp ebx edx ecx eax
+    pusha
     push ds
 	push es
     mov ax, 2 << 3 ; KERNEL_DATA_SEGMENT
@@ -27,7 +27,7 @@ isr_common:
 
     push esp               ; -> InterruptFrame *
     call interrupt_handler
-    add esp, 4
+    mov esp, eax
 
     pop es
     pop ds

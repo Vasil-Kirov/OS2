@@ -164,6 +164,8 @@ void kernel_main(uint32_t magic, multiboot_info *mb_info)
 	if (r != 0) {
 		kprintf("Failed to init display: %d", r);
 	}
+	kprintf("Enabling timer interrupts...");
+	kint_start_timer();
 	kprintf("Entering intial process...");
 	enter_proc(init_proc);
 

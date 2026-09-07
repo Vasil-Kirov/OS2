@@ -5,6 +5,8 @@ typedef enum {
 	SYS_write,  // (fd, buf, size)
 	SYS_open,   // (name, name_len, flags)
 	SYS_close,  // (fd)
+	SYS_spawn,  // (path, path_len)
+	SYS_getpid,
 } SYSCALLN;
 
 #define KERNEL_MAX_NAME_LEN (256)

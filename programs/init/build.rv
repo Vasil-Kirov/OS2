@@ -26,7 +26,7 @@ compile :: fn() -> CompileInfo {
 after_link :: fn(objs: []string) {
 
 	b := str.create_builder(&mem.temp_alloc);
-	str.builder_append(&b, "ld.lld -m elf_i386 -static -nostdlib -o blit ");
+	str.builder_append(&b, "ld.lld -m elf_i386 -static -nostdlib -o init ");
 	for obj in objs {
 		str.builder_append(&b, obj);
 		str.builder_append(&b, " ");
@@ -34,8 +34,7 @@ after_link :: fn(objs: []string) {
 	str.builder_append(&b, "../../syscall.o");
 
 	cmd := str.from_builder(&b, &mem.temp_alloc);
-	//println("cmd: %", cmd);
 	system(cmd.data);
-	system(c"move blit ../../../mnt/blit");
+	system(c"move init ../../../mnt/init");
 }
 

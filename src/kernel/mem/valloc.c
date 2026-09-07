@@ -528,6 +528,8 @@ MakeAddressSpaceError make_address_space(AddressSpace *vm)
 		res = MakeAddressSpace_OOM;
 		goto err_exit;
 	}
+	memset(vm->page_directory, 0, sizeof(u32) * 1024);
+
 	vm->dir_flags = PAGE_FLAG_US | PAGE_FLAG_RW | PAGE_FLAG_PRESENT;
 
 	add_kernel_to_address_space(vm, PAGE_FLAG_RW | PAGE_FLAG_PRESENT, true);

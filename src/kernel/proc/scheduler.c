@@ -4,13 +4,14 @@
 
 Process *current_proc = NULL;
 
+void set_current_proc(Process *next)
+{
+	current_proc = next;
+}
+
 Process *get_current_proc()
 {
 	return current_proc;
-}
-
-void scheduler_init()
-{
 }
 
 void scheduler_add_proc(Process *proc)
@@ -24,16 +25,22 @@ void scheduler_add_proc(Process *proc)
 	}
 }
 
-void schedule()
+void scheduler_tick(InterruptFrame *frame)
 {
+	Process *proc = get_current_proc();
+	if (!proc)
+		return;
 
+	proc->frame = frame;
+	set_current_proc(proc->next);
 }
 
 extern tss_entry tss;
 void enter_proc(Process *proc)
 {
 	tss.esp0 = proc->kernel_stack_top;
-	current_proc = proc;
+	scheduler_add_proc(proc);
+	set_current_proc(proc);
 	enter_proc_((uintptr_t)proc->entry, proc->stack_top, proc->vm.page_directory_paddr.addr);
 }
 

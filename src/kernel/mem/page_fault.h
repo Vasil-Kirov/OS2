@@ -33,7 +33,7 @@ static_assert(sizeof(uintptr_t) == sizeof(int));
              : label)                             \
 
 
-void handle_page_fault(InterruptFrame *f, u32 cr2);
+bool handle_page_fault(InterruptFrame *f, u32 cr2);
 
 
 #endif

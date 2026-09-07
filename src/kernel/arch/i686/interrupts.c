@@ -1,15 +1,16 @@
 #include "interrupts.h"
 
 #include <kprintf.h>
-#include <syscall/syscall.h>
 #include <kmem.h>
-#include <mem/page_fault.h>
 #include <io.h>
 #include <kcpuid.h>
 #include <errno.h>
 #include <msr.h>
 #include <acpi.h>
 #include <gdt.h>
+#include <syscall/syscall.h>
+#include <mem/page_fault.h>
+#include <proc/proc.h>
 
 #define IA32_APIC_BASE_MSR 0x1B
 #define IA32_APIC_BASE_MSR_BSP 0x100 // Processor is a BSP
@@ -52,6 +53,39 @@ static u32 volatile *ioapic = NULL;
 static u8 volatile *lapic = NULL;
 
 extern void *isr_stub_table[];
+
+u32 lapic_ticks_per_sec;
+
+#define PIT_DATA2 0x42
+#define PIT_CMD   0x43
+#define PIT_GATE2 0x61
+
+u32 kint_lapic_compute_ticks_per_sec()
+{
+	out8(PIT_GATE2, in8(PIT_GATE2) & ~0x03);
+
+	out8(PIT_CMD, 0xB0);
+
+    // 10 ms = 1193182 * 0.01 = 11932 ticks
+	out8(PIT_DATA2, 11932 & 0xFF);
+	out8(PIT_DATA2, 11932 >> 8);
+
+	write32(lapic+LAPIC_REG_Timer_Div_Config, (read32(lapic+LAPIC_REG_Timer_Div_Config) & ~0b1111) | 0b0011); // /= 16
+	write32(lapic+LAPIC_REG_LVT_Timer, 1 << 16); // masked interrupts, one-shot mode
+	write32(lapic+LAPIC_REG_Timer_Initial_Count, ~(u32)0); // Counts down from U32_MAX
+
+	// Raise gate, start counting
+    out8(PIT_GATE2, (in8(PIT_GATE2) & ~0x02) | 0x01);
+
+	// Wait
+    while (!(in8(PIT_GATE2) & 0x20))
+		;
+
+	u32 remain = read32(lapic+LAPIC_REG_Timer_Count);
+	write32(lapic+LAPIC_REG_Timer_Count, 0);
+
+	return ((~(u32)0) - remain) * 100;
+}
 
 void kint_set_idt(int idx, void *ptr, u8 attrs)
 {
@@ -126,7 +160,7 @@ int kint_setup_interrupts(RSDP *rsdp)
 	idtr.limit = sizeof(idt) - 1;
 	for(int i = 0; i < INT_COUNT; ++i) {
 		if (i == 128) {
-			//                                 Callable from user-mode
+			//                        Syscall, Callable from user-mode
 			kint_set_idt(i, isr_stub_table[i], 0xEE);
 		} else {
 			kint_set_idt(i, isr_stub_table[i], 0x8E);
@@ -194,8 +228,12 @@ int kint_setup_interrupts(RSDP *rsdp)
 
 
 	write32(lapic+LAPIC_REG_SPURIOUS_INT_VEC, read32(lapic+LAPIC_REG_SPURIOUS_INT_VEC) | 0x1FF); // Enable Suprious Interrupts
+	write32(lapic+LAPIC_REG_Task_Priority, read32(lapic+LAPIC_REG_Task_Priority) & ~0xFF); // Clear task priority
 
 	__asm__ volatile ("lidt %0" : : "m"(idtr)); // load the new IDT
+
+	lapic_ticks_per_sec = kint_lapic_compute_ticks_per_sec();
+
 	kint_enable_interrupts();
 
 	return 0;
@@ -216,26 +254,64 @@ void exception_handler() {
 		;
 }
 
-void interrupt_handler(InterruptFrame *f)
+#define TIMER_VECTOR_N (0x20)
+
+void kint_start_timer()
+{
+	kint_disable_interrupts();
+
+	write32(lapic+LAPIC_REG_Timer_Div_Config, (read32(lapic+LAPIC_REG_Timer_Div_Config) & ~0b1111) | 0b0011); // /= 16
+	write32(lapic+LAPIC_REG_LVT_Timer, TIMER_VECTOR_N | (1 << 17)); // Interrupt vector, periodic mode
+	write32(lapic+LAPIC_REG_Timer_Initial_Count, lapic_ticks_per_sec / 200); // 5 ms
+
+	kint_enable_interrupts();
+}
+
+extern tss_entry tss;
+InterruptFrame *interrupt_handler(InterruptFrame *f)
 {
 	if (f->vector < 32) {
+		u32 cr2;
+		__asm__ volatile (
+				"mov %0, cr2"
+				: "=r"(cr2)
+				);
 		if (f->vector == 14 /* PAGE FAULT */) {
-			u32 cr2;
-			__asm__ volatile (
-					"mov %0, cr2"
-					: "=r"(cr2)
-			);
-			handle_page_fault(f, cr2);
+			if (handle_page_fault(f, cr2))
+				return f;
 		}
+		kprintf("CPU Exception %d: %d | cr2: %d", f->vector, f->err_code, cr2);
 		exception_handler();
-		return; // no EOI
+		return f; // no EOI
 	}
-	if (f->vector == 128) {
-		f->eax = handle_syscall(f->eax, f->ebx, f->ecx, f->edx, f->esi, f->edi);
-		return; // no EOI
+	switch (f->vector)
+	{
+		case 0x20: // timer interrupt
+		{
+			scheduler_tick(f);
+			Process *proc = get_current_proc();
+			//kprintf("Timer interrupt fired, got proc: %p", proc);
+			if (proc) {
+				f = proc->frame;
+				tss.esp0 = proc->kernel_stack_top;
+				u32 cr3 = proc->vm.page_directory_paddr.addr;
+				__asm__ volatile (
+						"mov cr3, %0"
+						:: "r"(cr3) : "memory"
+						);
+			}
+		} break;
+		case 0x80: // syscall
+		{
+			f->eax = handle_syscall(f->eax, f->ebx, f->ecx, f->edx, f->esi, f->edi);
+			return f; // no EOI
+		} break;
+		default:
+		break;
 	}
 
 	write32(lapic + LAPIC_REG_EOI, 0);
+	return f;
 }
 
 void kint_disable_interrupts()

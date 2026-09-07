@@ -51,6 +51,7 @@ typedef struct {
 
 
 int kint_setup_interrupts(RSDP *rsdp);
+void kint_start_timer();
 void kint_disable_interrupts();
 void kint_enable_interrupts();
 

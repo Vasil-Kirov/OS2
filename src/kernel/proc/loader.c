@@ -4,6 +4,7 @@
 #include <kcommon.h>
 #include <vfs.h>
 #include <bstream.h>
+#include "kprintf.h"
 #include "proc.h"
 #include "elf.h"
 
@@ -74,12 +75,16 @@ LoadProcessError load_proc(Process *proc, string_view path)
 		goto err_free_vm;
 	}
 	proc->stack_top = (uintptr_t)proc->stack + DEFAULT_STACK_SIZE;
-	proc->kernel_stack = vmmap(&proc->vm, PAGE_SIZE*4, PAGE_FLAG_US | PAGE_FLAG_RW | PAGE_FLAG_PRESENT);
+	proc->kernel_stack = kmem_map(PAGE_SIZE*4, PAGE_FLAG_US | PAGE_FLAG_RW | PAGE_FLAG_PRESENT);
 	if (!proc->kernel_stack) {
 		res = -ENOMEM;
 		goto err_free_vm;
 	}
 	proc->kernel_stack_top = (uintptr_t)proc->kernel_stack + PAGE_SIZE*4;
+
+	kprintf("Loading proc %[str]", path);
+	kprintf("\tStack:   %p", proc->stack_top);
+	kprintf("\tKStack:  %p", proc->kernel_stack_top);
 
 
 
@@ -124,6 +129,7 @@ LoadProcessError load_proc(Process *proc, string_view path)
 				memcpy(tmp, bs.at, ph->p_filesz);
 				memset(tmp+ph->p_filesz, 0, ph->p_memsz-ph->p_filesz);
 				vmunmap_raw(&kernel_address_space, tmp, ph->p_memsz, false);
+				kprintf("\tSegment: %p", seg);
 			} break;
 		}
 	}
@@ -131,9 +137,37 @@ LoadProcessError load_proc(Process *proc, string_view path)
 	for (size_t i = 0; i < MAX_FDS; ++i)
 		proc->fds[i] = NULL;
 
+/*
+    u32 es, ds;
+    u32 edi, esi, ebp, esp_dummy, ebx, edx, ecx, eax;
+    u32 vector, err_code;
+    u32 eip, cs, eflags;
+    u32 user_esp, user_ss;
+ *
+ */
+
+	const u32 USER_CS = 3 << 3 | 3;
+	const u32 USER_DS = 4 << 3 | 3;
+
 	static int pid = 0;
 	proc->pid = atomic_increment(&pid);
 	proc->entry = (void *)header->e_entry;
+
+	InterruptFrame *frame = (InterruptFrame *)(proc->kernel_stack_top - sizeof(InterruptFrame));
+	memset(frame, 0, sizeof(InterruptFrame));
+
+	frame->eip = (uintptr_t)proc->entry;
+	frame->cs = USER_CS;
+	frame->eflags = 0x202; // int enabled, reserved = 1
+	frame->user_esp = proc->stack_top;
+	frame->user_ss = USER_DS;
+
+	frame->ds = USER_DS;
+	frame->es = USER_DS;
+	proc->frame = frame;
+
+	kprintf("\tEntry:   %p", proc->entry);
+	kprintf("\tPID:     %d", proc->pid);
 	kfree(buf);
 	vfs_close(f);
 	return LoadProc_Ok;

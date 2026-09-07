@@ -6,6 +6,7 @@
 #include <kcommon.h>
 #include <kprintf.h>
 #include <proc/proc.h>
+#include <proc/loader.h>
 
 static bool verify_fd(Process *proc, int fd)
 {
@@ -123,6 +124,51 @@ u32 handle_syscall(u32 eax, u32 ebx, u32 ecx, u32 edx, u32 esi, u32 edi)
 
 			vfs_close(proc->fds[fd]);
 			return 0;
+		} break;
+		case SYS_spawn:
+		{
+			const void __user *path_ptr = (void __user *)ebx;
+			const size_t path_len = ecx;
+
+			if (path_len > KERNEL_MAX_NAME_LEN) {
+				return -EINVAL;
+			}
+
+			ssize_t res = copy_from_user(buf, path_ptr, path_len);
+			if (res < 0)
+				return res;
+			if (res < (ssize_t)path_len)
+				return -EIO;
+
+			Process *proc = kzalloc(sizeof(Process));
+			if (!proc)
+				return -ENOMEM;
+
+			const string_view path = {res, path_ptr};
+
+			LoadProcessError err = load_proc(proc, path);
+			switch (err)
+			{
+				case LoadProc_Ok:
+				break;
+				case LoadProc_OOM:
+				kfree(proc);
+				return -ENOMEM;
+				default:
+				kfree(proc);
+				return -EINVAL;
+
+			}
+
+			scheduler_add_proc(proc);
+			return proc->pid;
+		} break;
+		case SYS_getpid:
+		{
+			Process *proc = get_current_proc();
+			if (!proc)
+				return -EINVAL;
+			return proc->pid;
 		} break;
 	}
 	return -ENOSYS;
