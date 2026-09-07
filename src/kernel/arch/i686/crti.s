@@ -1,15 +1,18 @@
-.section .init
-.global _init
-.type _init, @function
-_init:
-    push %ebp
-    movl %esp, %ebp
-    /* gcc crtbegin.o .init section */
+section .init
+global _init
 
-.section .fini
-.global _fini
-.type _fini, @function
+_init:
+    push ebp
+    mov ebp, esp
+    ; gcc crtbegin.o .init section
+
+
+section .fini
+global _fini
+
 _fini:
-    push %ebp
-    movl %esp, %ebp
-    /* gcc crtbegin.o .fini section */
+    push ebp
+    mov ebp, esp
+    ; gcc crtbegin.o .fini section
+
+

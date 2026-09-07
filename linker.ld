@@ -43,5 +43,19 @@ SECTIONS
 		*(.bootstrap_stack)
 	}
 
+	.drivers :
+	{
+		__drivers_start = .;
+		KEEP(*(.drivers))
+		__drivers_end = .;
+	}
+
+	.ex_table : ALIGN(4)
+	{
+		__ex_table_start = .;
+		KEEP(*(.ex_table))
+		__ex_table_end = .;
+	}
+
 	_kernel_end = .;
 }

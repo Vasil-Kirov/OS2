@@ -89,6 +89,14 @@ void *kmalloc(size_t size)
 	return mem;
 }
 
+void *kzalloc(size_t size)
+{
+	void *p = kmalloc(size);
+	if (p)
+		memset(p, 0, size);
+	return p;
+}
+
 void kfree(void *p_)
 {
 	if (!p_)

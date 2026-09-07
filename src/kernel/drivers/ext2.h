@@ -2,7 +2,7 @@
 #ifndef _EXT_2
 #define _EXT_2
 
-#include "block.h"
+#include "vfs.h"
 #include <kcommon.h>
 
 #define EXT2_SIG 0xef53
@@ -12,6 +12,10 @@
 #define EXT2_FEATURE_INCOMPAT_RECOVER     0x0004
 #define EXT2_FEATURE_INCOMPAT_JOURNAL_DEV 0x0008
 
+#define EXT2_FEATURE_READ_ONLY_SPARSE_SB  0x0001
+#define EXT2_FEATURE_READ_ONLY_64BIT_FSZ  0x0002
+#define EXT2_FEATURE_READ_ONLY_BINTREE_DIR  0x0004
+
 typedef struct {
 	u32 inode;
 	u16 size; // total of the entire struct and subfields
@@ -19,6 +23,7 @@ typedef struct {
 	u8 file_type_or_name_len_hi;
 	u8 name[];
 } Ext2DirEntry;
+static_assert(offsetof(Ext2DirEntry, name) == 8);
 
 enum Ext2INodeType {
 	Ext2INode_FIFO = 0x1000,
@@ -59,10 +64,14 @@ typedef struct {
     u8 osd2[12];           // OS dependent value #2
 
 	u8 ext[128];
+} Ext2INodeBase;
 
+typedef struct {
+	Ext2INodeBase base;
+	INode inode;
 } Ext2INode;
 
-static_assert(sizeof(Ext2INode) == 256);
+static_assert(sizeof(Ext2INodeBase) == 256);
 
 typedef struct {
 	u32 block_usage_bitmap; // BlockID
@@ -80,7 +89,9 @@ typedef struct {
 	u8 *buf; // fs->block_size in len
 	Ext2INode *dir;
 	Ext2DirEntry *entry;
-	size_t offset;
+	u64 size;
+	u64 offset;
+	u32 cached_block;
 } Ext2FindState;
 
 typedef struct {
@@ -131,7 +142,7 @@ typedef struct {
 } Ext2Superblock;
 
 typedef struct {
-	BlockDevice *blk;
+	SuperBlock *fsb;
 	Ext2Superblock sb;
 
 	u32 block_size;
@@ -141,10 +152,9 @@ typedef struct {
 	Ext2GroupDescriptor *groups;
 } Ext2FS;
 
+INode *ext2_new_inode(Ext2FS *fs, u32 inode_num);
+int ext2_init();
 
-int ext2_init(Ext2FS *fs, BlockDevice *blk);
-int ext2_read_inode(Ext2FS *fs, u32 inode_num, Ext2INode *inode);
-int ext2_read_root(Ext2FS *fs);
 
 #endif // _EXT_2
 

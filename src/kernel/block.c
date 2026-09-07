@@ -1,63 +1,91 @@
 #include "block.h"
-#include "kmem.h"
+#include <kmem.h>
+#include <kmalloc.h>
+#include <vfs.h>
 #include <errno.h>
 
-
-int block_read(BlockDevice *blk, u64 offset, size_t size, void *buf)
+ssize_t bdev_read(struct File *file, void *buf, size_t size)
 {
-	if(size == 0)
+	if (size == 0)
 		return 0;
 
-	u64 read_offset = offset%blk->block_size;
+	BlockDevice *bdev = file->inode->priv;
+	if (bdev->block_size == 0 || bdev->block_count == 0)
+		return -EINVAL;
 
-	u64 start_idx = offset/blk->block_size;
-	u64 end_idx = (offset+size-1)/blk->block_size;
+	u64 offset = file->offset;
+
+	u64 read_offset = offset%bdev->block_size;
+
+	u64 start_idx = offset/bdev->block_size;
+	u64 end_idx = (offset+size-1)/bdev->block_size;
+	if (end_idx >= bdev->block_count)
+		end_idx = bdev->block_count;
+	if (end_idx < start_idx)
+		return -EINVAL;
 
 	u64 block_count = end_idx-start_idx+1;
 
 	void *vaddr;
 	uintptr_t paddr;
-	if (!dma_map(block_count * blk->block_size, &vaddr, &paddr)) {
+	if (!dma_map(block_count * bdev->block_size, &vaddr, &paddr)) {
 		return -ENOMEM;
 	}
 
-	int ret = blk->read(blk, start_idx, end_idx-start_idx+1, paddr);
+	int ret = bdev->read(bdev, start_idx, block_count, paddr);
 	if (ret != 0) {
-		dma_unmap(paddr);
+		dma_unmap(vaddr);
 		return ret;
 	}
 	
 	memcpy(buf, (u8 *)vaddr+read_offset, size);
-	dma_unmap(paddr);
-	return 0;
+	dma_unmap(vaddr);
+	file->offset += size;
+	return size;
 }
 
-int block_nvme_write(BlockDevice *blk, u64 block_idx, u16 block_count, uintptr_t buf)
+u64 bdev_seek(File *file, u64 offset, SeekFrom from)
 {
-	NVMeDevice *dev = blk->data;
-	if (!nvme_write(dev, 1, block_idx, block_count, buf))
-		return -EIO;
-	return 0;
+	if (from == SeekFrom_Start)
+		file->offset = offset;
+	if (from == SeekFrom_Curr)
+		file->offset += offset;
+	return file->offset;
 }
 
-int block_nvme_read(BlockDevice *blk, u64 block_idx, u16 block_count, uintptr_t buf)
-{
-	NVMeDevice *dev = blk->data;
-	if (!nvme_read(dev, 1, block_idx, block_count, buf))
-		return -EIO;
-	return 0;
-}
+FileOps bdev_fops = {
+	.open = fop_generic_open,
+	.read = bdev_read,
+	.write = NULL, // @TODO:
+	.seek = bdev_seek,
+};
 
-int block_from_nvme(BlockDevice *block, NVMeDevice *dev)
+int bdev_create(Device *dev, BDevWriteFn write, BDevReadFn read, size_t block_count, size_t block_size, void *data)
 {
-	if (dev->ns_count == 0)
-		return -ENODEV;
+	BlockDevice *bdev = kzalloc(sizeof(BlockDevice));
+	if (IS_ERR_OR_NULL(bdev))
+		return PTR_ERR_OR(bdev, -ENOMEM);
 
-	block->write = block_nvme_write;
-	block->read = block_nvme_read;
-	block->block_count = dev->ns_infos[0].num_blocks;
-	block->block_size = dev->ns_infos[0].block_size;
-	block->data = dev;
+	bdev->write = write;
+	bdev->read = read;
+	bdev->block_count = block_count;
+	bdev->block_size = block_size;
+	bdev->data = data;
+
+	DirEntry *devdir = vfs_find(STR_LIT("/dev"));
+	if (IS_ERR_OR_NULL(devdir)) {
+		kfree(bdev);
+		return PTR_ERR_OR(devdir, -ENOENT);
+	}
+
+	DirEntry *deve = devdir->inode->op.create(devdir, &dev->name, S_IFBLK | 0777);
+	if (IS_ERR_OR_NULL(deve)) {
+		kfree(bdev);
+		return PTR_ERR_OR(deve, -EIO);
+	}
+
+	deve->inode->fop = bdev_fops;
+	deve->inode->priv = bdev;
 	return 0;
 }
 

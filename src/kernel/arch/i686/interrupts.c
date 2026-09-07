@@ -1,19 +1,52 @@
 #include "interrupts.h"
 
+#include <kprintf.h>
+#include <syscall/syscall.h>
 #include <kmem.h>
+#include <mem/page_fault.h>
 #include <io.h>
 #include <kcpuid.h>
 #include <errno.h>
 #include <msr.h>
 #include <acpi.h>
+#include <gdt.h>
 
 #define IA32_APIC_BASE_MSR 0x1B
 #define IA32_APIC_BASE_MSR_BSP 0x100 // Processor is a BSP
 #define IA32_APIC_BASE_MSR_ENABLE 0x800
 
+#define LAPIC_REG_ID  0x020 // R/W
+#define LAPIC_REG_VER 0x030 // R
+#define LAPIC_REG_Task_Priority 0x080 // R/W
+#define LAPIC_REG_APR 0x090 // R
+#define LAPIC_REG_PPR 0x0A0 // R
+#define LAPIC_REG_EOI 0x0B0 // W
+#define LAPIC_REG_RRD 0x0C0 // R
+#define LAPIC_REG_LDR 0x0D0 // R/W
+#define LAPIC_REG_DFR 0x0E0 // R/W
+#define LAPIC_REG_SPURIOUS_INT_VEC 0x0F0 // R/W
+#define LAPIC_REG_InService 0x100 // R
+#define LAPIC_REG_TriggerMode 0x180 // R
+#define LAPIC_REG_IntReq 0x200 // R
+#define LAPIC_REG_ErrStatus 0x280 // R
+#define LAPIC_REG_CMCI 0x2F0 // R/W
+#define LAPIC_REG_IntCmd 0x300 // R/W
+#define LAPIC_REG_LVT_Timer 0x320 // R/W
+#define LAPIC_REG_LVT_Thermal 0x330 // R/W
+#define LAPIC_REG_LVT_Perf 0x340 // R/W
+#define LAPIC_REG_LVT_INT0 0x350 // R/W
+#define LAPIC_REG_LVT_INT1 0x360 // R/W
+#define LAPIC_REG_LVT_Err 0x370 // R/W
+#define LAPIC_REG_Timer_Initial_Count 0x380 // R/W
+#define LAPIC_REG_Timer_Count 0x390 // R
+#define LAPIC_REG_Timer_Div_Config 0x3E0 // R/W
+
 __attribute__((aligned(0x10))) 
 static IDT_Entry idt[INT_COUNT];
 static IDTR idtr;
+
+static_assert(sizeof(IDTR) == 6);
+static_assert(sizeof(IDT_Entry) == 8);
 
 static u32 volatile *ioapic = NULL;
 static u8 volatile *lapic = NULL;
@@ -46,15 +79,15 @@ void kint_ioapic_write(u32 reg, u32 value)
 // Still need to do this because PIC can fire random interrupts
 void kint_remap_legacy_pic(int off1, int off2)
 {
-	out32(PIC1_COMMAND, ICW1_INIT | ICW1_ICW4);  // starts the initialization sequence (in cascade mode)
-	out32(PIC2_COMMAND, ICW1_INIT | ICW1_ICW4);
-	out32(PIC1_DATA, off1);                 // ICW2: Master PIC vector offset
-	out32(PIC2_DATA, off2);                 // ICW2: Slave PIC vector offset
-	out32(PIC1_DATA, 1 << CASCADE_IRQ);        // ICW3: tell Master PIC that there is a slave PIC at IRQ2
-	out32(PIC2_DATA, 2);                       // ICW3: tell Slave PIC its cascade identity (0000 0010)
+	out8(PIC1_COMMAND, ICW1_INIT | ICW1_ICW4);  // starts the initialization sequence (in cascade mode)
+	out8(PIC2_COMMAND, ICW1_INIT | ICW1_ICW4);
+	out8(PIC1_DATA, off1);                 // ICW2: Master PIC vector offset
+	out8(PIC2_DATA, off2);                 // ICW2: Slave PIC vector offset
+	out8(PIC1_DATA, 1 << CASCADE_IRQ);        // ICW3: tell Master PIC that there is a slave PIC at IRQ2
+	out8(PIC2_DATA, 2);                       // ICW3: tell Slave PIC its cascade identity (0000 0010)
 
-	out32(PIC1_DATA, ICW4_8086);               // ICW4: have the PICs use 8086 mode (and not 8080 mode)
-	out32(PIC2_DATA, ICW4_8086);
+	out8(PIC1_DATA, ICW4_8086);               // ICW4: have the PICs use 8086 mode (and not 8080 mode)
+	out8(PIC2_DATA, ICW4_8086);
 }
 
 void kint_disable_legacy_pic()
@@ -72,7 +105,7 @@ static bool kint_check_apic()
 
 void cpu_set_apic_base(uintptr_t apic) {
    uint32_t edx = 0;
-   uint32_t eax = (apic & 0xfffff0000) | IA32_APIC_BASE_MSR_ENABLE;
+   uint32_t eax = (apic & 0xfffff000) | IA32_APIC_BASE_MSR_ENABLE;
 
    cpu_set_msr(IA32_APIC_BASE_MSR, eax, edx);
 }
@@ -91,8 +124,14 @@ int kint_setup_interrupts(RSDP *rsdp)
 
 	idtr.base = (uintptr_t)idt;
 	idtr.limit = sizeof(idt) - 1;
-	for(int i = 0; i < INT_COUNT; ++i)
-		kint_set_idt(i, isr_stub_table[i], 0x8E);
+	for(int i = 0; i < INT_COUNT; ++i) {
+		if (i == 128) {
+			//                                 Callable from user-mode
+			kint_set_idt(i, isr_stub_table[i], 0xEE);
+		} else {
+			kint_set_idt(i, isr_stub_table[i], 0x8E);
+		}
+	}
 
 	kint_remap_legacy_pic(32, 40);
 	kint_disable_legacy_pic();
@@ -145,7 +184,7 @@ int kint_setup_interrupts(RSDP *rsdp)
 		goto err_unmap_madt;
 	}
 
-	size_t io_size = 0x40;
+	//size_t io_size = 0x40;
 	ioapic = kmem_map_phy_addr(io_apic_phy, 0x1000, PAGE_FLAG_MMIO);
 	if(!ioapic) {
 		ret = -ENOMEM;
@@ -154,7 +193,7 @@ int kint_setup_interrupts(RSDP *rsdp)
 	kmem_unmap_raw(madt, 0x1000);
 
 
-	write32(lapic+0xF0, read32(lapic+0xF0) | 0x1FF); // Enable Suprious Interrupts
+	write32(lapic+LAPIC_REG_SPURIOUS_INT_VEC, read32(lapic+LAPIC_REG_SPURIOUS_INT_VEC) | 0x1FF); // Enable Suprious Interrupts
 
 	__asm__ volatile ("lidt %0" : : "m"(idtr)); // load the new IDT
 	kint_enable_interrupts();
@@ -177,6 +216,28 @@ void exception_handler() {
 		;
 }
 
+void interrupt_handler(InterruptFrame *f)
+{
+	if (f->vector < 32) {
+		if (f->vector == 14 /* PAGE FAULT */) {
+			u32 cr2;
+			__asm__ volatile (
+					"mov %0, cr2"
+					: "=r"(cr2)
+			);
+			handle_page_fault(f, cr2);
+		}
+		exception_handler();
+		return; // no EOI
+	}
+	if (f->vector == 128) {
+		f->eax = handle_syscall(f->eax, f->ebx, f->ecx, f->edx, f->esi, f->edi);
+		return; // no EOI
+	}
+
+	write32(lapic + LAPIC_REG_EOI, 0);
+}
+
 void kint_disable_interrupts()
 {
 	__asm__ volatile ("cli");
@@ -185,5 +246,9 @@ void kint_disable_interrupts()
 void kint_enable_interrupts()
 {
 	__asm__ volatile ("sti");
+}
+
+void apic_start_timer() {
+	write32(lapic+LAPIC_REG_Timer_Div_Config, 0x3);
 }
 

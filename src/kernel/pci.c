@@ -1,5 +1,7 @@
 #include "pci.h"
 
+#include <kprintf.h>
+#include <kmalloc.h>
 #include <string.h>
 #include <kcommon.h>
 #include <io.h>
@@ -10,9 +12,120 @@
 #define CONFIG_ADDRESS (0xCF8)
 #define CONFIG_DATA (0xCFC)
 
+int pci_enable(PCIeDevice *pdev)
+{
+	if (!pdev)
+		return -EINVAL;
+	if (pdev->map)
+		return 0;
+	PCIe *pcie = pdev->prv;
+	for(size_t i = 0; i < pcie->entry_count; ++i) {
+		MCFG_ConfigSpace *cfg = &pcie->mcfg->addrs[i];
+		if(cfg->start_bus <= pdev->bus && cfg->end_bus >= pdev->bus) {
+
+			uintptr_t addr = cfg->base_addr + pcie_bus_offset(cfg->start_bus, pdev->bus, pdev->devn, pdev->fn);
+			pdev->map = kmem_map_phy_addr(addr, KB(4), PAGE_FLAG_MMIO);
+			if (pdev->map == NULL)
+				return -ENOMEM;
+			pdev->cfg_space_idx = i;
+			return 0;
+		}
+	}
+	return -ENODEV;
+}
+
+int pci_set_command(PCIeDevice *pdev, u16 flags)
+{
+	if (!pdev)
+		return -EINVAL;
+	if (!pdev->map || pdev->cfg_space_idx < 0)
+		return -EINVAL;
+
+	PCIe *pcie = pdev->prv;
+	MCFG_ConfigSpace *cfg = &pcie->mcfg->addrs[pdev->cfg_space_idx];
+	size_t space = pcie_bus_offset(cfg->start_bus, pdev->bus, pdev->devn, pdev->fn);
+	u32 status_cmd = read32(pcie->map + space + 0x04);
+	status_cmd &= ~0x3FF;
+	status_cmd |= flags & 0x3FF;
+	write32(pcie->map + space + 0x04, status_cmd);
+	return 0;
+}
+
+u32 pci_read_bar(PCIeDevice *pdev, u8 barn)
+{
+	if (barn > 5)
+		return ~0;
+	if (!pdev)
+		return ~0;
+	if (!pdev->map || pdev->cfg_space_idx < 0)
+		return ~0;
+	PCIe *pcie = pdev->prv;
+	MCFG_ConfigSpace *cfg = &pcie->mcfg->addrs[pdev->cfg_space_idx];
+	size_t space = pcie_bus_offset(cfg->start_bus, pdev->bus, pdev->devn, pdev->fn);
+	u32 bar = read32(pcie->map + space + 0x10 + (barn*4));
+	return bar;
+}
+
+static bool pcie_match_id(u32 id_a, u32 id_b)
+{
+	if (id_a != PCI_ANY_ID && id_b != PCI_ANY_ID && id_a != id_b)
+		return false;
+	return true;
+}
+
+int pcie_match(struct Device *dev_, const struct DeviceDriver *drv_)
+{
+	if (!dev_ || !drv_)
+		return -EINVAL;
+
+	PCIeDevice *dev = container_of(dev_, PCIeDevice, dev);
+	const PCIeDriver *drv = container_of(drv_, PCIeDriver, drv);
+	if (!pcie_match_id(drv->match.class, dev->id.class))
+		return 0;
+	if (!pcie_match_id(drv->match.subclass, dev->id.subclass))
+		return 0;
+	if (!pcie_match_id(drv->match.vendor_id, dev->id.vendor_id))
+		return 0;
+
+	return 1;
+}
+
+static int pcie_probe(struct Device *dev_)
+{
+	if (!dev_->drv)
+		return -EINVAL;
+
+	PCIeDevice *dev = container_of(dev_, PCIeDevice, dev);
+	PCIeDriver *drv = container_of(dev_->drv, PCIeDriver, drv);
+
+	return drv->probe(dev);
+}
+
+static void pcie_remove(struct Device *dev_)
+{
+	if (!dev_->drv)
+		return;
+
+	PCIeDevice *dev = container_of(dev_, PCIeDevice, dev);
+	PCIeDriver *drv = container_of(dev_->drv, PCIeDriver, drv);
+
+	drv->remove(dev);
+}
+
+DeviceBus pcie_bus = {
+	.match = pcie_match,
+	.probe = pcie_probe,
+	.remove = pcie_remove,
+};
 
 PCIe *pcie_init(RSDP *rsdp)
 {
+	int err = bus_register(&pcie_bus);
+	if (err != 0) {
+		kprintf("Failed to register PCIe bus, error %d", err);
+		return NULL;
+	}
+
 	PCIe *pcie = kmem_map(sizeof(*pcie), PAGE_FLAG_RW);
 	if(!pcie)
 		return NULL;
@@ -169,7 +282,86 @@ const char *pcie_subclass_name(u8 class, u8 subclass)
 
 		default:
 			return "Unknown";
+	} }
+
+static const char *pcie_device_prefix(u8 class, u8 subclass)
+{
+	switch (class) {
+		case 0x01: // Mass Storage Controller
+		switch (subclass) {
+			case 0x00: return "sd";   // SCSI
+			case 0x01: return "hd";   // IDE
+			case 0x02: return "fd";   // Floppy
+			case 0x04: return "md";   // RAID
+			case 0x05: return "sd";   // ATA
+			case 0x06: return "sd";   // SATA
+			case 0x07: return "sd";   // SAS
+			case 0x08: return "nvme"; // NVMe
+			default:   return "sd";
+		}
+		case 0x02: // Network Controller
+		switch (subclass) {
+			case 0x00: return "eth"; // Ethernet
+			default:   return "net";
+		}
+		case 0x03: // Display Controller
+		return "fb";
+		case 0x0C: // Serial Bus Controller
+		switch (subclass) {
+			case 0x00: return "fw";   // FireWire
+			case 0x03: return "usb";  // USB
+			default:   return "sbus";
+		}
+		default:
+		return "dev";
 	}
+}
+
+static bool pcie_register_callback(PCIeDevDesc *desc, void *pcie)
+{
+	PCIeDevice *dev = kzalloc(sizeof(PCIeDevice));
+	if (!dev)
+		return true;
+
+	const char *devname = pcie_device_prefix(desc->class, desc->subclass);
+	const char *readable_name = pcie_subclass_name(desc->class, desc->subclass);
+
+
+	dev->cfg_space_idx = -1;
+	dev->prv = pcie;
+	dev->id.class = desc->class;
+	dev->id.subclass = desc->subclass;
+	dev->id.vendor_id = desc->vendor_id;
+	dev->bus = desc->bus;
+	dev->devn = desc->dev;
+	dev->fn = desc->fn;
+
+	dev->dev.name = str_cstr(devname);
+	dev->dev.bus = &pcie_bus;
+	int res = device_register(&dev->dev);
+
+	size_t name_len = strlen(readable_name);
+	char pad[128] = {};
+	for (size_t i = 0; i < ARRAY_COUNT(pad); ++i) {
+		if (name_len+i > 32)
+			break;
+		pad[i] = ' ';
+	}
+
+	if (res == 0) {
+		kprintf("\t%s%s : bound to /dev/%[str]", readable_name, pad, dev->dev.name);
+	} else if (res == -ENODEV) {
+		kprintf("\t%s%s : no matching driver", readable_name, pad);
+	} else {
+		kprintf("\t%s%s : error %d", readable_name, pad, res);
+	}
+	return false;
+}
+
+void pcie_register_devices(PCIe *pcie)
+{
+	kprintf("PCI: Registering devices");
+	pcie_iterate_entries(pcie, pcie_register_callback, pcie);
 }
 
 int pcie_iterate_entries(PCIe *pcie, PCIeItCallback cb, void *arg)
@@ -283,5 +475,12 @@ u32 pci_read(u8 bus, u8 dev, u8 fn, u8 offset)
 
 	out32(CONFIG_ADDRESS, address);
 	return in32(CONFIG_DATA);
+}
+
+
+int pci_register_driver(PCIeDriver *drv)
+{
+	drv->drv.bus = &pcie_bus;
+	return driver_register(&drv->drv);
 }
 

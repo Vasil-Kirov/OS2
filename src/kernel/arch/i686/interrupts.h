@@ -18,9 +18,15 @@ typedef struct {
 	u32 base;
 } __attribute__((packed)) IDTR;
 
+typedef struct {
+    u32 es, ds;
+    u32 edi, esi, ebp, esp_dummy, ebx, edx, ecx, eax;
+    u32 vector, err_code;
+    u32 eip, cs, eflags;
+    u32 user_esp, user_ss;   // present only on a privilege-level change
+} __attribute__((packed)) InterruptFrame;
 
 #define INT_COUNT (256)
-#define KERNEL_CODE_SEGMENT (1)
 
 #define PIC1		0x20		/* IO base address for master PIC */
 #define PIC2		0xA0		/* IO base address for slave PIC */

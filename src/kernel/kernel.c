@@ -7,9 +7,14 @@
 #include <pci.h>
 #include <gdt.h>
 #include <interrupts.h>
-#include <drivers/nvme.h>
 #include <block.h>
+#include <vfs.h>
+#include <tmpfs.h>
+#include <proc/loader.h>
+#include <drivers.h>
+#include <drivers/nvme.h>
 #include <drivers/ext2.h>
+#include <display/display.h>
 
 __attribute__ ((noreturn)) 
 void panic(const char *msg)
@@ -78,24 +83,7 @@ void kernel_main(uint32_t magic, multiboot_info *mb_info)
 	kinit_heap();
 
 	kprintf("Setting up GDT...");
-	// @TODO: Task Segment
-	size_t gdt_seg_count = 5;
-	GDT_Segment *seg = kmem_map(sizeof(GDT_Segment) * gdt_seg_count, PAGE_FLAG_MMIO);
-	if(!seg)
-		panic("Failed to allocate memory for GDT segments!");
-
-	// NULL segment
-	seg[0] = kgdt_make_segment(0, 0, 0, 0);
-	// Kernel Code
-	seg[1] = kgdt_make_segment(0, 0xFFFFF, 0x9A, 0xC);
-	// Kernel Data
-	seg[2] = kgdt_make_segment(0, 0xFFFFF, 0x92, 0xC);
-	// User Code
-	seg[3] = kgdt_make_segment(0, 0xFFFFF, 0xFA, 0xC);
-	// User Data
-	seg[4] = kgdt_make_segment(0, 0xFFFFF, 0xF2, 0xC);
-
-	kgdt_set((uintptr_t)seg, gdt_seg_count * sizeof(GDT_Segment) - 1);
+	kgdt_setup();
 
 	kprintf("Setting up interrupts...");
 	kint_setup_interrupts(&acpio_tag->rsdp);
@@ -108,24 +96,79 @@ void kernel_main(uint32_t magic, multiboot_info *mb_info)
 	if(!pci)
 		panic("Failed to init PCIe!");
 
-	kprintf("PCIe devices:");
-	pcie_iterate_entries(pci, pcie_print_dev, NULL);
+	//kprintf("PCIe devices:");
+	//pcie_iterate_entries(pci, pcie_print_dev, NULL);
 
-	kprintf("Initializing NVMe driver...");
-	NVMeDevice nvme = {};
-	int nvme_res = nvme_init(pci, &nvme);
-	if(nvme_res != 0)
-		panic("Failed to init NVMe!");
+	kprintf("Initializing VFS...");
+	vfs_init();
+	int r = tmpfs_init();
+	if (r != 0) {
+		kprintf("Failed to init tmpfs: %d", r);
+		panic("TmpFS init failed!");
+	}
+	r = ext2_init();
+	if (r != 0) {
+		kprintf("Failed to init ext2: %d", r);
+		panic("Ext2 init failed!");
+	}
+	r = vfs_mount_root(STR_LIT("tmpfs"));
+	if (r != 0) {
+		kprintf("Failed to mount root tmpfs: %d", r);
+		panic("Root mount failed!");
+	}
+	r = vfs_setup_dev();
+	if (r != 0) {
+		kprintf("Failed to create /dev: %d", r);
+		panic("File system init failed!");
+	}
+	r = drivers_init();
+	if (r != 0) {
+		kprintf("Failed to init drivers: %d", r);
+		panic("Driver init failed!");
+	}
 
-	kprintf("Initializing block device...");
-	BlockDevice blk = {};
-	block_from_nvme(&blk, &nvme);
+	kprintf("Registering PCIe devices...");
+	pcie_register_devices(pci);
 
-	kprintf("Initializing file system...");
-	Ext2FS fs = {};
-	ext2_init(&fs, &blk);
-	//ext2_read_root(&fs);
+	kprintf("Creating /mnt...");
+	DirEntry *root = vfs_find(STR_LIT("/"));
+	if (IS_ERR_OR_NULL(root)) {
+		kprintf("Failed to find root in tmpfs: %d", PTR_ERR(root));
+		panic("Finding root failed!");
+	}
+	string_view mnt_str = STR_LIT("mnt");
+	DirEntry *mnt = root->inode->op.create(root, &mnt_str, 0777);
+	if (IS_ERR_OR_NULL(mnt)) {
+		kprintf("Failed to create /mnt in tmpfs: %d", PTR_ERR(mnt));
+		panic("Creating /mnt failed!");
+	}
 
+	kprintf("Mounting disk...");
+	r = vfs_mount(STR_LIT("ext2"), STR_LIT("/mnt"), STR_LIT("/dev/nvme0"), 0777);
+	if (r != 0) {
+		kprintf("Failed to mount ext2 fs: %d", r);
+		panic("Ext2 mount failed!");
+	}
+
+	kprintf("Loading initial process...");
+	Process *init_proc = kmem_map(sizeof(Process), PAGE_FLAG_RW);
+	ASSERT(init_proc);
+	LoadProcessError load_res = load_proc(init_proc, STR_LIT("/mnt/init"));
+	if (load_res != LoadProc_Ok) {
+		kprintf("Failed to load init proc: %d", load_res);
+		panic("Failed to load init proc!");
+	}
+
+	kprintf("Initializing display...");
+	r = display_init(fb_tag);
+	if (r != 0) {
+		kprintf("Failed to init display: %d", r);
+	}
+	kprintf("Entering intial process...");
+	enter_proc(init_proc);
+
+
+#if 0
 	kprintf("Kernel initialized!");
 	u32 *color = kmem_map(sizeof(u32), PAGE_FLAG_RW);
 	if(!color)
@@ -147,5 +190,8 @@ void kernel_main(uint32_t magic, multiboot_info *mb_info)
 			buffer += fb_tag->framebuffer_pitch/4;
 		}
 	}
+
+	drivers_deinit();
+#endif
 }
 

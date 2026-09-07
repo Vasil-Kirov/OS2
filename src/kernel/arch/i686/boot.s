@@ -76,10 +76,10 @@ l1:
 	jnz l1
 
 	mov ecx, phys_addr(boot_page_table) + 0x3
-	mov [phys_addr(paging_directory)],           ecx
-	mov [phys_addr(paging_directory) + 768 * 4], ecx
+	mov [phys_addr(kernel_paging_directory)],           ecx
+	mov [phys_addr(kernel_paging_directory) + 768 * 4], ecx
 
-	mov ecx, phys_addr(paging_directory)
+	mov ecx, phys_addr(kernel_paging_directory)
 	mov cr3, ecx
 
 	mov ecx, cr0
@@ -96,7 +96,7 @@ section .text
 higher_kernel:
 	mov esp, stack_top
 	mov ecx, 0
-	mov [phys_addr(paging_directory)], ecx ; Unmap identity mapped kernel
+	mov [phys_addr(kernel_paging_directory)], ecx ; Unmap identity mapped kernel
 
 	mov ebx, [mboot_ebx]
 	mov eax, [mboot_eax]
@@ -110,11 +110,12 @@ higher_kernel:
 	jmp $
 	
 
-global paging_directory
+global kernel_paging_directory
+global boot_page_table
 section .bss
 align 0x1000
 
-paging_directory:
+kernel_paging_directory:
 	resb 1024 * 4
 
 boot_page_table:

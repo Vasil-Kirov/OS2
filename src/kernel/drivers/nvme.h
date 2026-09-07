@@ -5,7 +5,6 @@
 #include <pci.h>
 
 struct NVMeDevice;
-int nvme_init(PCIe *pcie, struct NVMeDevice *out_dev);
 bool nvme_write(struct NVMeDevice *dev, int nsid, u64 lba, u16 nblocks, uintptr_t buf_paddr);
 bool nvme_read(struct NVMeDevice *dev, int nsid, u64 lba, u16 nblocks, uintptr_t buf_paddr);
 
@@ -170,6 +169,7 @@ typedef struct NVMeDevice {
 	NVMeIdentifyNamespace id_namespace;
 	NVMeNamespaceInfo ns_infos[__MAX_NVME_NS];
 	int ns_count;
+	PCIeDevice *pdev;
 } NVMeDevice;
 
 #endif

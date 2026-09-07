@@ -6,13 +6,16 @@ KPrintConsole kprint_console;
 
 static void print_ptr(uintptr_t val) {
 	const char hex[] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'};
+	const size_t width = sizeof(uintptr_t) * 2;
 	if (val == 0) {
-		kprint_console.write_char('0');
+		for (size_t i = 0; i < width; ++i) {
+			kprint_console.write_char('0');
+		}
 		kprint_console.write_char('h');
 		return;
 	}
 
-	char temp[128];
+	char temp[sizeof(uintptr_t) * 2];
 	size_t count = 0;
 	while (val > 0) {
 		unsigned digit = val & 0xF;
@@ -20,7 +23,6 @@ static void print_ptr(uintptr_t val) {
 		temp[count++] = hex[digit];
 	}
 
-	size_t width = sizeof(uintptr_t) * 2;
 	for (size_t i = count; i < width; ++i) {
 		kprint_console.write_char('0');
 	}
@@ -58,13 +60,10 @@ static void print_int(int val) {
 	}
 }
 
-void kprintf(const char *fmt, ...)
+void vkprintf(const char *fmt, va_list args)
 {
 	if(!kprint_console.write_char)
 		return;
-
-	va_list args;
-	va_start(args, fmt);
 
 	for (size_t i = 0; fmt[i] != 0; ++i) {
 		if (fmt[i] == '%') {
@@ -80,9 +79,47 @@ void kprintf(const char *fmt, ...)
 					uintptr_t val = va_arg(args, uintptr_t);
 					print_ptr(val);
 				} break;
+				case '[':
+				{
+					string_view v = {0, &fmt[i+1]};
+					size_t end = i+1;
+					for (; fmt[end] != '\0' && fmt[end] != ']'; ++end)
+						;
+					if (fmt[end] != ']') {
+						kprint_console.write_char('%');
+						kprint_console.write_char('[');
+						continue;
+					}
+					v.count = end-(i+1);
+
+					if(str_compare_const(&v, "str"))
+					{
+						const string_view err = STR_LIT("(null)");
+						string_view s = va_arg(args, string_view);
+						if (s.data == NULL)
+							s = err;
+						if (!s.data && s.count > 0)
+							s = err;
+
+						for(size_t i = 0; i < s.count; ++i)
+							kprint_console.write_char(s.data[i]);
+					}
+					else
+					{
+						const char *s = "(unknown)";
+						while (*s) {
+							kprint_console.write_char(*s);
+							s++;
+						}
+					}
+					i = end;
+				} break;
 				case 's':
 				{
 					const char *s = va_arg(args, const char *);
+					if (!s) {
+						s = "(null)";
+					}
 					while (*s) {
 						kprint_console.write_char(*s);
 						s++;
@@ -108,8 +145,41 @@ void kprintf(const char *fmt, ...)
 			kprint_console.write_char(fmt[i]);
 		}
 	}
-	kprint_console.write_char('\n');
+}
 
+void kprintf(const char *fmt, ...)
+{
+	va_list args;
+	va_start(args, fmt);
+	vkprintf(fmt, args);
+	kprint_console.write_char('\n');
 	va_end(args);
+}
+
+static char *curr_buf;
+static size_t curr_size;
+static size_t curr_at;
+static void kprint_write_to_buf(char c)
+{
+	if (curr_at >= curr_size)
+		return;
+	curr_buf[curr_at++] = c;
+}
+
+void snprintf(char buf[], size_t size, const char *fmt, ...)
+{
+	// @TODO: hack
+	curr_buf = buf;
+	curr_size = size;
+	curr_at = 0;
+	KPrintConsole save = kprint_console;
+	kprint_console.write_char = kprint_write_to_buf;
+
+	va_list args;
+	va_start(args, fmt);
+	vkprintf(fmt, args);
+	va_end(args);
+
+	kprint_console = save;
 }
 

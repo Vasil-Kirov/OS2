@@ -1,6 +1,7 @@
 bin/**
 sysroot/**
 disk.qcow2
+disk.img
 
 # Prerequisites
 *.d

@@ -1,5 +1,9 @@
 #include "nvme.h"
 
+#include <block.h>
+#include <kprintf.h>
+#include <drivers.h>
+#include <kmalloc.h>
 #include <errno.h>
 #include <pci.h>
 #include <kcommon.h>
@@ -122,62 +126,69 @@ bool nvme_read(NVMeDevice *dev, int nsid, u64 lba, u16 nblocks, uintptr_t buf_pa
 	return true;
 }
 
-bool nvme_identify_namespace(NVMeDevice *dev, u32 nsid)
+bool nvme_identify_namespace(NVMeDevice *ndev, u32 nsid)
 {
 	void *vaddr;
 	uintptr_t paddr;
 	if (!dma_map(PAGE_SIZE, &vaddr, &paddr))
 		return false;
+	memset(vaddr, 0, PAGE_SIZE);
+
 	NVMeSubmissionEntry e = {};
 	e.cmd = NVMeAdmin_Identify;
 	e.NSID = nsid;
 	nvme_set_prp(&e.prp[0], &e.prp[1], paddr);
 	e.arg[0] = 0x0; // Identify namespace
-	u16 status = nvme_cmd(dev, &dev->admin, &e);
+	u16 status = nvme_cmd(ndev, &ndev->admin, &e);
 	if (status != 0) {
-		dma_unmap(paddr);
+		dma_unmap(vaddr);
 		return NULL;
 	}
 
-	memcpy(&dev->id_namespace, vaddr, sizeof(NVMeIdentifyNamespace));
-	dma_unmap(paddr);
+	memcpy(&ndev->id_namespace, vaddr, sizeof(NVMeIdentifyNamespace));
+	dma_unmap(vaddr);
 	return true;
 }
 
-bool nvme_identify_controller(NVMeDevice *dev)
+bool nvme_identify_controller(NVMeDevice *ndev)
 {
 	void *vaddr;
 	uintptr_t paddr;
 	if (!dma_map(PAGE_SIZE, &vaddr, &paddr))
 		return NULL;
+	memset(vaddr, 0, PAGE_SIZE);
+
 	NVMeSubmissionEntry e = {};
 	e.cmd = NVMeAdmin_Identify;
 	nvme_set_prp(&e.prp[0], &e.prp[1], paddr);
 	e.arg[0] = 0x1; // Identify controller
-	u16 status = nvme_cmd(dev, &dev->admin, &e);
+	u16 status = nvme_cmd(ndev, &ndev->admin, &e);
 	if (status != 0) {
-		dma_unmap(paddr);
+		dma_unmap(vaddr);
 		return NULL;
 	}
 
-	memcpy(&dev->id_controller, vaddr, sizeof(NVMeIdentifyController));
-	dma_unmap(paddr);
+	memcpy(&ndev->id_controller, vaddr, sizeof(NVMeIdentifyController));
+	dma_unmap(vaddr);
 	return vaddr;
 }
 
-bool nvme_create_queue(NVMeQueue *q)
+bool nvme_create_queue(NVMeDevice *ndev, NVMeQueue *q)
 {
 	void *svaddr;
 	uintptr_t saddr;
-	if(!dma_map(PAGE_SIZE, &svaddr, &saddr))
+	if(!devm_dma_map(&ndev->pdev->dev, PAGE_SIZE, &svaddr, &saddr))
 		return false;
 
 	void *cvaddr;
 	uintptr_t caddr;
-	if(!dma_map(PAGE_SIZE, &cvaddr, &caddr)) {
-		dma_unmap(saddr);
+	if(!devm_dma_map(&ndev->pdev->dev, PAGE_SIZE, &cvaddr, &caddr)) {
+		devm_dma_unmap(&ndev->pdev->dev, svaddr);
 		return false;
 	}
+	memset(svaddr, 0, PAGE_SIZE);
+	memset(cvaddr, 0, PAGE_SIZE);
+
 	q->sq = svaddr;
 	q->sq_paddr = saddr;
 	q->sq_size = PAGE_SIZE/sizeof(NVMeSubmissionEntry);
@@ -190,19 +201,19 @@ bool nvme_create_queue(NVMeQueue *q)
 	return true;
 }
 
-bool nvme_create_admin_queue(NVMeDevice *dev, NVMeQueue *q)
+bool nvme_create_admin_queue(NVMeDevice *ndev, NVMeQueue *q)
 {
-	if (!nvme_create_queue(q))
+	if (!nvme_create_queue(ndev, q))
 		return false;
 	q->id = 0;
-	nvme_write_reg(dev, 0x28, (u64)q->sq_paddr);
-	nvme_write_reg(dev, 0x30, (u64)q->cq_paddr);
+	nvme_write_reg(ndev, 0x28, (u64)q->sq_paddr);
+	nvme_write_reg(ndev, 0x30, (u64)q->cq_paddr);
 	return true;
 }
 
 bool nvme_create_io_queue(NVMeDevice *dev, NVMeQueue *admin, NVMeQueue *q, int qid)
 {
-	if (!nvme_create_queue(q))
+	if (!nvme_create_queue(dev, q))
 		return false;
 	q->id = qid;
 	NVMeSubmissionEntry e0 = {};
@@ -226,87 +237,93 @@ bool nvme_create_io_queue(NVMeDevice *dev, NVMeQueue *admin, NVMeQueue *q, int q
 	return true;
 }
 
-int nvme_init(PCIe *pcie, NVMeDevice *dev)
+int nvme_block_write(BlockDevice *blk, u64 block_idx, u16 block_count, uintptr_t buf)
 {
-	int bus;
-	int devn;
-	int fn;
-	MCFG_ConfigSpace *cfg = NULL;
-	for(size_t i = 0; i < pcie->entry_count; ++i) {
-		cfg = &pcie->mcfg->addrs[i];
-		if(!pcie_map_config_space(pcie, cfg->start_bus))
-			return -ENOMEM;
-		
-		for(bus = cfg->start_bus; bus <= cfg->end_bus; ++bus) {
-			for(devn = 0; devn < 32; ++devn) {
-				for(fn = 0; fn < 8; ++fn) {
-					size_t space = pcie_bus_offset(cfg->start_bus, bus, devn, fn);
-					u16 vendor_id = read16(pcie->map + space);
+	NVMeDevice *dev = blk->data;
+	if (!nvme_write(dev, 1, block_idx, block_count, buf))
+		return -EIO;
+	return 0;
+}
 
-					// Invalid ID
-					if(vendor_id == 0xFFFF)
-						continue;
+int nvme_block_read(BlockDevice *blk, u64 block_idx, u16 block_count, uintptr_t buf)
+{
+	NVMeDevice *dev = blk->data;
+	if (!nvme_read(dev, 1, block_idx, block_count, buf))
+		return -EIO;
+	return 0;
+}
 
-					u32 data = read32(pcie->map + space + 0x8);
-					u8 class = data >> 24;
-					u8 subclass = (data >> 16) & 0xFF;
-
-					// Mass Storage,   NVMe
-					if(class != 0x1 || subclass != 0x8)
-						continue;
-
-					goto found_device;
-				}
-			}
-		}
-
-		pcie_unmap_config_space(pcie);
+#define NVME_POLL_MAX  10000000u
+static int nvme_wait_ready(NVMeDevice *ndev, u32 want)
+{
+	for (u32 i = 0; i < NVME_POLL_MAX; ++i) {
+		u32 csts = nvme_read_reg32(ndev, NVMe_CSTS);
+		if (csts & 2) // Controller Fatal Status
+			return -EIO;
+		if ((csts & 1) == want)
+			return 0;
 	}
-	return -ENODEV;
+	return -ETIMEDOUT;
+}
 
-found_device:
+int nvme_probe(PCIeDevice *pdev)
+{
 	int err = 0;
 
-	size_t space = pcie_bus_offset(cfg->start_bus, bus, devn, fn);
-	u32 status_cmd = read32(pcie->map + space + 0x04);
-	status_cmd |= (1 << 2) | (1 << 1); // Enable Bus Mastering and Memory Space Access
-	status_cmd &= ~(1 << 10); // Enable interupts
-	write32(pcie->map + space + 0x04, status_cmd);
+	err = pci_enable(pdev);
+	if (err != 0)
+		return err;
 
-	u32 bar0 = read32(pcie->map + space + 0x10) & ~0b1111;
-	u32 bar1 = read32(pcie->map + space + 0x14) & ~0b1111;
-	if (bar1) {
-		err = -EFAULT;
-		goto error_unmap_config;
-	}
+	// Enable Bus Mastering and Memory Space Access
+	pci_set_command(pdev, PCI_CMD_MEMORY_SPACE | PCI_CMD_BUS_MASTER | PCI_CMD_INT_DISABLE);
+	u32 bar0v = pci_read_bar(pdev, 0);
+	u32 bar1v = pci_read_bar(pdev, 1);
+	if (bar0v == ~0u || bar1v == ~0u)
+		return -EIO;
 
-	void *base = kmem_map_phy_addr(bar0, PAGE_SIZE*2, PAGE_FLAG_MMIO);
-	if (base == NULL) {
-		err = -ENOMEM;
-		goto error_unmap_config;
-	}
+	u32 bar0 = bar0v & ~0b1111;
+	u32 bar1 = bar1v & ~0b1111;
+	if (bar1)
+		return -EFAULT;
 
-	*dev = (NVMeDevice){};
-	dev->base = base;
+	void *base = devm_map_mmio(&pdev->dev, bar0, PAGE_SIZE*2);
+	if (base == NULL)
+		return -ENOMEM;
+
+	NVMeDevice *ndev = devm_kzalloc(&pdev->dev, sizeof(NVMeDevice));
+	if (!ndev)
+		return -ENOMEM;
+
+	pdev->drv_data = ndev;
+	ndev->base = base;
+	ndev->pdev = pdev;
 	
-	nvme_reg32_clear(dev, NVMe_CC, 0); // CC.EN = 0
-	while ((nvme_read_reg32(dev, NVMe_CSTS) & 1) != 0) ;
+	u32 CC = nvme_read_reg32(ndev, NVMe_CC);
+	if (CC & 1) { // CC.EN == 1
+		err = nvme_wait_ready(ndev, 1); // Wait for CS.RDY == 1
+		if (err != 0)
+			return err;
 
-	u64 CAP = nvme_read_reg(dev, NVMe_CAP);
-	dev->doorbell_stride = 4 <<  ((CAP >> 32) & 0xF);
+		nvme_write_reg32(ndev, NVMe_CC, CC & ~1); // CC.EN = 0
+	}
+	err = nvme_wait_ready(ndev, 0);
+	if (err != 0)
+		return err;
+
+	u64 CAP = nvme_read_reg(ndev, NVMe_CAP);
+	ndev->doorbell_stride = 4 <<  ((CAP >> 32) & 0xF);
 
 	u8 mpsmin = (CAP >> 48) & 0xF;
 	if (mpsmin != 0) {
-		err = -ENODEV;
-		goto error_free_base;
+		return -ENODEV;
 	}
 
 	u8 CSS = (CAP >> 37) & 0xFF;
 	if ((CSS & 1) == 0) { // No NVM command set
-		err = -ENODEV;
-		goto error_free_base;
+		return -ENODEV;
 	}
-	u32 CC = nvme_read_reg32(dev, NVMe_CC);
+
+	CC = nvme_read_reg32(ndev, NVMe_CC);
 	CC &= ~(0x7 << 4); // CSS = NVM Command Set
 	CC &= ~(0xF << 7); // MPS = 4Kb
 	CC &= ~(0x7 << 11); // AMS = Round Robin (Supported on all devices)
@@ -316,69 +333,81 @@ found_device:
 	CC &= ~(0xF << 20);
 	CC |= 0x4 << 20; // IOSQES (IO Completion Queue Entry Size) = 2^4(16)
 
-	nvme_write_reg32(dev, NVMe_CC, CC);
+	nvme_write_reg32(ndev, NVMe_CC, CC);
 
 
-	if (!nvme_create_admin_queue(dev, &dev->admin)) {
-		err = -ENOMEM;
-		goto error_free_base;
+	if (!nvme_create_admin_queue(ndev, &ndev->admin)) {
+		return -ENOMEM;
 	}
 
-	u32 AQA =  ((dev->admin.sq_size-1) & 0xFFF) << 0;
-	AQA |= ((dev->admin.cq_size-1) & 0xFFF) << 16;
-	nvme_write_reg32(dev, NVMe_AQA, AQA);
+	u32 AQA =  ((ndev->admin.sq_size-1) & 0xFFF) << 0;
+	AQA |= ((ndev->admin.cq_size-1) & 0xFFF) << 16;
+	nvme_write_reg32(ndev, NVMe_AQA, AQA);
 
-	nvme_reg32_set(dev, NVMe_CC, 0); // CC.EN = 1
-	while ((nvme_read_reg32(dev, NVMe_CSTS) & 1) == 0) ;
+	nvme_reg32_set(ndev, NVMe_CC, 0); // CC.EN = 1
+	while ((nvme_read_reg32(ndev, NVMe_CSTS) & 1) == 0) ;
 
-	if (!nvme_create_io_queue(dev, &dev->admin, &dev->io, 1)) {
-		err = -ENOMEM;
-		goto error_free_admin_queue;
+	if (!nvme_create_io_queue(ndev, &ndev->admin, &ndev->io, 1)) {
+		return -ENOMEM;
 	}
 
-	if (!nvme_identify_controller(dev)) {
-		err = -ENOMEM;
-		goto error_free_io_queue;
+	if (!nvme_identify_controller(ndev)) {
+		return -ENOMEM;
 	}
 
-	dev->ns_count = 0;
-	for (u32 i = 0; i < dev->id_controller.NN; ++i)
+	ndev->ns_count = 0;
+	for (u32 i = 0; i < ndev->id_controller.NN; ++i)
 	{
-		if (!nvme_identify_namespace(dev, i+1))
+		if (!nvme_identify_namespace(ndev, i+1))
 			continue;
-		if (dev->id_namespace.NSZE == 0)
+		if (ndev->id_namespace.NSZE == 0)
 			continue;
 
-		u8 fidx = dev->id_namespace.FLBAS & 0xF;
-		u32 block_size = 1 << dev->id_namespace.lbaf[fidx].LBADS;
+		u8 fidx = ndev->id_namespace.FLBAS & 0xF;
+		u32 block_size = 1 << ndev->id_namespace.lbaf[fidx].LBADS;
 
-		dev->ns_infos[dev->ns_count++] = (NVMeNamespaceInfo){
+		ndev->ns_infos[ndev->ns_count++] = (NVMeNamespaceInfo){
 			.nsid = i+1,
-			.num_blocks = dev->id_namespace.NSZE,
+			.num_blocks = ndev->id_namespace.NSZE,
 			.block_size = block_size,
 		};
 	}
-	if (dev->ns_count == 0) {
-		err = -ENODEV;
-		goto error_free_io_queue;
+	if (ndev->ns_count == 0) {
+		return -ENODEV;
 	}
 
-	pcie_unmap_config_space(pcie);
+	err = bdev_create(&ndev->pdev->dev, nvme_block_write, nvme_block_read, ndev->ns_infos[0].num_blocks, ndev->ns_infos[0].block_size, ndev);
+	if (err != 0) {
+		return err;
+	}
+
 	return 0;
-
-error_free_io_queue:
-	dma_unmap(dev->io.sq_paddr);
-	dma_unmap(dev->io.cq_paddr);
-
-error_free_admin_queue:
-	dma_unmap(dev->admin.sq_paddr);
-	dma_unmap(dev->admin.cq_paddr);
-
-error_free_base:
-	kmem_unmap(base);
-
-error_unmap_config:
-	pcie_unmap_config_space(pcie);
-	return err;
 }
+
+void nvme_remove(PCIeDevice *pdev)
+{
+	(void)pdev;
+	// devres managed
+	// @TODO: shutdown sequence?
+}
+
+static PCIeDriver nvme_driver = {
+	.match = { .class = 0x1, .subclass = 0x8, .vendor_id = PCI_ANY_ID },
+	.probe = nvme_probe,
+	.remove = nvme_remove,
+	.drv = {
+		.name = STR_LIT("nvme_driver"),
+	}
+};
+
+int nvme_driver_init()
+{
+	return pci_register_driver(&nvme_driver);
+}
+
+void nvme_driver_exit()
+{
+}
+
+BUILTIN_DRIVER("nvme_driver", nvme_driver_init, nvme_driver_exit)
 

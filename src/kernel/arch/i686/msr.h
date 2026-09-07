@@ -9,8 +9,8 @@ static const u32 CPUID_FLAG_MSR = 1 << 5;
 
 static inline bool cpu_has_msr()
 {
-   static u32 a, d; // eax, edx
-   u32 unused;
+   static unsigned int a, d; // eax, edx
+   unsigned int unused;
    __get_cpuid(1, &a, &unused, &unused, &d);
    return d & CPUID_FLAG_MSR;
 }

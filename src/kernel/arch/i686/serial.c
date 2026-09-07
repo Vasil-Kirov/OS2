@@ -1,7 +1,9 @@
 #include "serial.h"
+#include <kmalloc.h>
 #include <errno.h>
 #include <kcommon.h>
 #include <io.h>
+#include <drivers.h>
 
 #define COM1 0x3F8
 
@@ -45,4 +47,47 @@ u8 serial_read() {
 
 	return in8(COM1);
 }
+
+ssize_t tty_write(File *file, void *buf, size_t size)
+{
+	(void)file;
+	u8 *p = buf;
+	for (size_t i = 0; i < size; ++i)
+		serial_write(p[i]);
+
+	return size;
+}
+
+ssize_t tty_read(File *file, void *buf, size_t size)
+{
+	(void)file;
+	u8 *p = buf;
+	for (size_t i = 0; i < size; ++i)
+		p[i] = serial_read();
+
+	return size;
+}
+
+static FileOps tty_fops = {
+	.open = fop_stub_open,
+	.close = fop_stub_close,
+	.write = tty_write,
+	.read = tty_read,
+	.seek = fop_generic_seek,
+};
+
+int tty_init()
+{
+	Device *dev = kzalloc(sizeof(Device));
+	if (!dev)
+		return -ENOMEM;
+	dev->name = STR_LIT("tty0");
+	return chrdev_create(dev, tty_fops);
+}
+
+void tty_exit()
+{
+}
+
+BUILTIN_DRIVER("tty", tty_init, tty_exit);
 
