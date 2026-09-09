@@ -522,6 +522,7 @@ void dma_unmap(void *vaddr)
 
 MakeAddressSpaceError make_address_space(AddressSpace *vm)
 {
+	memset(vm, 0, sizeof(AddressSpace));
 	MakeAddressSpaceError res = MakeAddressSpace_Ok;
 	vm->page_directory = vmmap_(&kernel_address_space, NULL, sizeof(u32) * 1024, PAGE_FLAG_RW, &vm->page_directory_paddr);
 	if (!vm->page_directory) {

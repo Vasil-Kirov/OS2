@@ -132,6 +132,13 @@ void vfs_close(File *f)
 	kfree(f);
 }
 
+ssize_t vfs_readdir(File *file, void *buf, size_t size)
+{
+	if (file->fop.readdir == NULL)
+		return -EINVAL;
+	return file->fop.readdir(file, buf, size);
+}
+
 ssize_t vfs_read(File *file, void *buf, size_t size)
 {
 	if (file->fop.read == NULL)
@@ -263,6 +270,17 @@ DirEntry *mount_bdev(FileSystem *fs, string_view dev_path, int flags, int (*fill
 	return sb->root;
 }
 
+void vfs_free_readdir_entries(DirInfo *arr, size_t len)
+{
+	for (size_t i = 0; i < len; ++i)
+		kfree(arr[i].name);
+}
+
+void vfs_free_readdir_entries_vm(AddressSpace *vm, DirInfo *arr, size_t len)
+{
+	for (size_t i = 0; i < len; ++i)
+		vmunmap(vm, arr[i].name);
+}
 
 DirEntry *make_dentry(string_view name, INode *inode, DirEntry *parent)
 {

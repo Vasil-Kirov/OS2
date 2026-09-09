@@ -19,6 +19,7 @@ typedef int32_t i32;
 typedef int64_t i64;
 
 typedef ptrdiff_t ssize_t;
+#define SSIZE_MAX PTRDIFF_MAX
 
 typedef struct {
 	size_t count;

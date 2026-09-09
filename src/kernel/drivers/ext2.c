@@ -142,24 +142,27 @@ static int ext2_find_load(Ext2FS *fs, Ext2FindState *find)
 Ext2FindState *ext2_find_first_file(Ext2FS *fs, Ext2INode *dir)
 {
 	if (!S_ISDIR(dir->base.mode))
-		return NULL;
+		return ERR_PTR(-EINVAL);
 
 	Ext2FindState *find = kmem_map(sizeof(Ext2FindState), PAGE_FLAG_RW);
 	if (!find)
-		return NULL;
+		return ERR_PTR(-ENOMEM);
 
 	find->buf = kmem_map(fs->block_size, PAGE_FLAG_RW);
 	if (!find->buf) {
 		kmem_unmap(find);
-		return NULL;
+		return ERR_PTR(-ENOMEM);
 	}
 
 	find->dir    = dir;
 	find->size   = ext2_inode_size(dir);
 	find->offset = 0;
 	find->cached_block = UINT32_MAX;
-	if (ext2_find_load(fs, find) != 0) {
+	int r = ext2_find_load(fs, find);
+	if (r != 0) {
 		ext2_find_close(find);
+		if (r < 0)
+			return ERR_PTR(r);
 		return NULL;
 	}
 
@@ -177,8 +180,8 @@ DirEntry *ext2_lookup(INode *inode_, DirEntry *parent, const string_view *name)
 	Ext2FS *fs = inode_->sb->private;
 	Ext2INode *inode = container_of(inode_, Ext2INode, inode);
 	Ext2FindState *find = ext2_find_first_file(fs, inode);
-	if (!find)
-		return NULL;
+	if (IS_ERR_OR_NULL(find))
+		return (void *)find;
 
 	DirEntry *r = NULL;
 	do {
@@ -261,9 +264,51 @@ void ext2_close(File *file)
 	(void)file;
 }
 
-i64 ext2_get_size(struct INode *inode)
+i64 ext2_get_size(INode *inode)
 {
 	return ext2_inode_size(container_of(inode, Ext2INode, inode));
+}
+
+ssize_t ext2_readdir(File *file, void *buf, size_t size)
+{
+	if (size > SSIZE_MAX)
+		return -EINVAL;
+
+	Ext2INode *inode = container_of(file->inode, Ext2INode, inode);
+	Ext2FS *fs = inode->inode.sb->private;
+
+	Ext2FindState *find = ext2_find_first_file(fs, inode);
+	if (!find)
+		return 0;
+	if (IS_ERR(find))
+		return PTR_ERR(find);
+
+	ssize_t read = 0;
+	DirInfo *arr = buf;
+	for (; read < (ssize_t)size; ++read)
+	{
+		string_view name = ext2_dentry_name(fs, find->entry);
+		arr[read].name_len = name.count;
+		arr[read].name = kzalloc(name.count);
+		if (!arr[read].name) {
+			vfs_free_readdir_entries(arr, read);
+			return -ENOMEM;
+		}
+		memcpy(arr[read].name, name.data, name.count);
+
+		int r = ext2_find_next_file(fs, find);
+		if (r == 1) {
+			read++;
+			break;
+		}
+		if (r < 0) {
+			vfs_free_readdir_entries(arr, read);
+			read = r;
+			break;
+		}
+	}
+	ext2_find_close(find);
+	return read;
 }
 
 static INodeOps ext2_inode_ops = {
@@ -277,6 +322,7 @@ static FileOps ext2_file_ops = {
 	.close = ext2_close,
 	.write = NULL,
 	.read = ext2_read,
+	.readdir = ext2_readdir,
 	.seek = ext2_seek,
 };
 

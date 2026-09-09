@@ -12,7 +12,7 @@ compile :: fn() -> CompileInfo {
 	return .{
 		files = .{"main.rv", "sys.rv"},
 		source_dirs = []string {"../src", "../.." },
-        opt = 0,
+        opt = 2,
         flags = .DebugInfo | .NoLink | .Standalone | .NoLibC | .DisableBoundsCheck,
 		entry_point = "main",
 		arch = .x86,

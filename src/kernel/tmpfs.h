@@ -30,7 +30,7 @@ typedef struct {
 	u32 inode_idx;
 } TmpFSSBInfo;
 
-INode *tmpfs_new_inode(TmpFSINode *parent, SuperBlock *block, mode_t mode);
+INode *tmpfs_new_inode(TmpFSINode *parent, SuperBlock *block, string_view name, mode_t mode);
 int tmpfs_init();
 
 #endif

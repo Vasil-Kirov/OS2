@@ -7,6 +7,7 @@ SyscallN :: enum: u32 {
 	close,  // (fd)
 	spawn,  // (name, name_len)
 	getpid, // ()
+	readdir,// (fd, buf: [count]string, count) -> read
 }
 
 syscall_ :: fn(eax: u32, ebx: u32, ecx: u32, edx: u32, esi: u32, edi: u32) -> i32 #foreign #link="syscall" #cc="cdecl";
@@ -47,6 +48,23 @@ syscall :: fn(call: SyscallN, args: ...) -> i32 {
 		}
 	}
 	return syscall_(eax, ebx, ecx, edx, esi, edi);
+}
+
+open :: fn(path: string, mode: u32) -> i32 {
+	return syscall(.open, path);
+}
+
+writes :: fn(fd: i32, buf: string) -> i32 {
+	return syscall(.write, fd, buf);
+}
+
+write :: fn(fd: i32, buf: []u8) -> i32 {
+	return syscall(.write, fd, buf);
+}
+
+readdir :: fn(fd: i32, buf: []string) -> i32 {
+	buf := buf;
+	return syscall(.readdir, fd, &buf[0], len(buf));
 }
 
 print_num :: fn(tty: i32, str: string, n: i32) {

@@ -5,6 +5,7 @@
 
 #include <kcommon.h>
 #include <list.h>
+#include <kmem.h>
 
 typedef u16 mode_t;
 
@@ -34,6 +35,11 @@ struct INode;
 struct FileSystem;
 struct MountPoint;
 struct DirEntry;
+
+typedef struct {
+	size_t name_len;
+	char *name;
+} DirInfo;
 
 typedef struct DirEntry {
 	string_view name;
@@ -72,6 +78,7 @@ typedef struct {
 	void (*close)(struct File *file);
 	ssize_t (*write)(struct File *file, void *buf, size_t size);
 	ssize_t (*read)(struct File *file, void *buf, size_t size);
+	ssize_t (*readdir)(struct File *file, void *buf, size_t size);
 	u64 (*seek)(struct File *file, u64 offset, SeekFrom from);
 } FileOps;
 
@@ -126,6 +133,7 @@ DirEntry *vfs_find(string_view path);
 File *vfs_open(string_view path);
 void vfs_close(File *f);
 ssize_t vfs_read(File *file, void *buf, size_t size);
+ssize_t vfs_readdir(File *file, void *buf, size_t size);
 ssize_t vfs_write(File *file, void *buf, size_t size);
 
 int vfs_mount_root(const string_view fs_name);
@@ -135,6 +143,9 @@ DirEntry *mount_nodev(FileSystem *fs, int flags, int (*fill_super)(SuperBlock*))
 DirEntry *mount_bdev(FileSystem *fs, string_view dev, int flags, int (*fill_super)(SuperBlock*));
 void vfs_fill_inode(INode *inode, u32 inum, INodeOps iops, FileOps fops, mode_t mode, SuperBlock *sb);
 DirEntry *make_dentry(string_view name, INode *inode, DirEntry *parent);
+
+void vfs_free_readdir_entries(DirInfo *arr, size_t len);
+void vfs_free_readdir_entries_vm(AddressSpace *vm, DirInfo *arr, size_t len);
 
 #endif // _VFS_H
 

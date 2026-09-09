@@ -1,12 +1,13 @@
 #include <kcommon.h>
 
 typedef enum {
-	SYS_read,   // (fd, buf, size)
-	SYS_write,  // (fd, buf, size)
-	SYS_open,   // (name, name_len, flags)
+	SYS_read,   // (fd, buf, size) -> read
+	SYS_write,  // (fd, buf, size) -> wirrten
+	SYS_open,   // (name, name_len, flags) -> fd
 	SYS_close,  // (fd)
-	SYS_spawn,  // (path, path_len)
-	SYS_getpid,
+	SYS_spawn,  // (path, path_len) -> pid
+	SYS_getpid, // () -> pid
+	SYS_readdir, // (fd, buf, count) -> read_count
 } SYSCALLN;
 
 #define KERNEL_MAX_NAME_LEN (256)

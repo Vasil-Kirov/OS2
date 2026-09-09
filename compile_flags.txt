@@ -7,4 +7,5 @@
 -std=c23
 --sysroot=sysroot
 -Wall
+-Wextra
 

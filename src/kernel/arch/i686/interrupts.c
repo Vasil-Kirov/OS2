@@ -280,7 +280,11 @@ InterruptFrame *interrupt_handler(InterruptFrame *f)
 			if (handle_page_fault(f, cr2))
 				return f;
 		}
-		kprintf("CPU Exception %d: %d | cr2: %d", f->vector, f->err_code, cr2);
+		int pid = -1;
+		Process *proc = get_current_proc();
+		if (proc)
+			pid = proc->pid;
+		kprintf("CPU Exception PID: %d, vec: %d, err: %d, cr2: %p", pid, f->vector, f->err_code, cr2);
 		exception_handler();
 		return f; // no EOI
 	}

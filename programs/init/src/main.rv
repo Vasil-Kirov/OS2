@@ -6,17 +6,35 @@ _ :: #import sys;
 
 
 _start :: fn() #foreign #link="_start" {
-	tty := syscall(.open, "/dev/tty0", 0);
+	tty := open("/dev/tty0", 0);
 	if tty < 0 {
 		for {}
 	}
-	syscall(.write, tty, "Initial process started!\n");
+	writes(tty, "Opening root...\n");
+	root := open("/", 0);
+	if root < 0 {
+		writes(tty, "Failed to open root!\n");
+		for {}
+	}
+	writes(tty, "Initial process started!\n");
 
-	pid := syscall(.spawn, "/mnt/blit");
-	print_num(tty, "Parent: ", syscall(.getpid));
-	print_num(tty, "Spawned: ", pid);
+	buf: [1024]string;
+	read := readdir(root, buf[:]);
+	if read < 0 {
+		//syscall(.write, tty, "Failed to read root!\n");
+		print_num(tty, "Failed to read root!", read);
+		for {}
+	}
+	writes(tty, "Printing dirs...\n");
+	dirs := buf[:read];
+	for dir in dirs {
+		writes(tty, "\t");
+		writes(tty, dir);
+		writes(tty, "\n");
+	}
+
+	writes(tty, "Printed!");
 	for {
-		syscall(.write, tty, "PROCESS 1!\n");
 	}
 }
 

@@ -18,6 +18,23 @@ static bool verify_fd(Process *proc, int fd)
 	return true;
 }
 
+static void *kbuf_matching_len(const size_t user_len)
+{
+#define MAX_USER_BUF (MB(64))
+	if (user_len > MAX_USER_BUF)
+		return ERR_PTR(-EINVAL);
+
+	void *kbuf = kmalloc(user_len);
+	if (!kbuf)
+		return ERR_PTR(-ENOMEM);
+	return kbuf;
+}
+
+static bool is_ssize_fit(u32 r)
+{
+	return r <= SSIZE_MAX;
+}
+
 u32 handle_syscall(u32 eax, u32 ebx, u32 ecx, u32 edx, u32 esi, u32 edi)
 {
 	(void)esi;
@@ -34,13 +51,12 @@ u32 handle_syscall(u32 eax, u32 ebx, u32 ecx, u32 edx, u32 esi, u32 edi)
 			Process *proc = get_current_proc();
 			if (!verify_fd(proc, fd))
 				return -EBADF;
-
 			if (buf_len == 0)
 				return 0;
 
-			void *kbuf = kmalloc(buf_len);
-			if (!kbuf)
-				return -ENOMEM;
+			void *kbuf = kbuf_matching_len(buf_len);
+			if (IS_ERR(kbuf))
+				return PTR_ERR(kbuf);
 
 			ssize_t read = vfs_read(proc->fds[fd], kbuf, buf_len);
 			if (read < 0) {
@@ -157,7 +173,6 @@ u32 handle_syscall(u32 eax, u32 ebx, u32 ecx, u32 edx, u32 esi, u32 edi)
 				default:
 				kfree(proc);
 				return -EINVAL;
-
 			}
 
 			scheduler_add_proc(proc);
@@ -169,6 +184,56 @@ u32 handle_syscall(u32 eax, u32 ebx, u32 ecx, u32 edx, u32 esi, u32 edi)
 			if (!proc)
 				return -EINVAL;
 			return proc->pid;
+		} break;
+		case SYS_readdir:
+		{
+			int fd = ebx;
+			void __user *buf = (void __user *)ecx;
+			const size_t buf_len = edx;
+
+			Process *proc = get_current_proc();
+			if (!verify_fd(proc, fd))
+				return -EBADF;
+			if (buf_len == 0)
+				return 0;
+			if (!is_ssize_fit(buf_len))
+				return -EINVAL;
+
+			void *kbuf = kbuf_matching_len(buf_len*sizeof(DirInfo));
+			if (IS_ERR(kbuf))
+				return PTR_ERR(kbuf);
+			ssize_t read = vfs_readdir(proc->fds[fd], kbuf, buf_len);
+			if (read <= 0) {
+				kfree(kbuf);
+				return read;
+			}
+			DirInfo *arr = kbuf;
+			for (ssize_t i = 0; i < read; ++i) {
+				void *user_name = vmmap(&proc->vm, arr[i].name_len, PAGE_FLAG_RW);
+				if (!user_name) {
+					vfs_free_readdir_entries_vm(&proc->vm, arr, i);
+					vfs_free_readdir_entries(arr + i, read-i);
+					kfree(kbuf);
+					return -ENOMEM;
+				}
+				memcpy(user_name, arr[i].name, arr[i].name_len);
+				kfree(arr[i].name);
+				arr[i].name = user_name;
+			}
+
+			ssize_t to_copy = min(read, (ssize_t)buf_len);
+			ssize_t copied = copy_to_user(buf, arr, to_copy * sizeof(DirInfo));
+			if (copied != to_copy * (ssize_t)sizeof(DirInfo))
+			{
+				vfs_free_readdir_entries_vm(&proc->vm, arr, read);
+				kfree(kbuf);
+				if (copied < 0)
+					return copied;
+				else
+					return -EIO;
+			}
+			kfree(kbuf);
+			return to_copy;
 		} break;
 	}
 	return -ENOSYS;

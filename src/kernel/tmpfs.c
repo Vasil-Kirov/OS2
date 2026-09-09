@@ -110,8 +110,10 @@ ssize_t tmpfs_read(File *file, void *buf, size_t size)
 }
 
 DirEntry *tmpfs_create(struct DirEntry *dir, const string_view *name, mode_t mode) {
+	ASSERT(name);
+
 	TmpFSINode *inode = container_of(dir->inode, TmpFSINode, base);
-	INode *new = tmpfs_new_inode(inode, inode->base.sb, mode);
+	INode *new = tmpfs_new_inode(inode, inode->base.sb, *name, mode);
 	if (IS_ERR_OR_NULL(new))
 		return ERR_PTR(PTR_ERR_OR(new, -ENOMEM));
 
@@ -132,7 +134,32 @@ struct DirEntry *tmpfs_lookup(struct INode *inode_, DirEntry *parent, const stri
 i64 tmpfs_get_size(INode *inode_)
 {
 	TmpFSINode *inode = container_of(inode_, TmpFSINode, base);
-	return inode->page_table.page_count * PAGE_SIZE;
+	return (i64)inode->page_table.page_count * PAGE_SIZE;
+}
+
+ssize_t tmpfs_readdir(File *file, void *buf, size_t size)
+{
+	if (size > SSIZE_MAX)
+		return -EINVAL;
+
+	TmpFSINode *inode = container_of(file->inode, TmpFSINode, base);
+	TmpFSINode *it;
+	DirInfo *arr = buf;
+	ssize_t read = 0;
+	list_for_each_entry(it, &inode->children, node) {
+		if (read == (ssize_t)size)
+			break;
+
+		arr[read].name_len = it->name.count;
+		arr[read].name = kzalloc(it->name.count);
+		if (!arr[read].name) {
+			vfs_free_readdir_entries(arr, read);
+			return -ENOMEM;
+		}
+		memcpy(arr[read].name, it->name.data, it->name.count);
+		read++;
+	}
+	return read;
 }
 
 static FileOps tmpfs_fops = {
@@ -140,6 +167,7 @@ static FileOps tmpfs_fops = {
 	.close = tmpfs_close,
 	.write = tmpfs_write,
 	.read = tmpfs_read,
+	.readdir = tmpfs_readdir,
 	.seek = fop_generic_seek,
 };
 
@@ -149,12 +177,13 @@ static INodeOps tmpfs_ops = {
 	.get_size = tmpfs_get_size,
 };
 
-INode *tmpfs_new_inode(TmpFSINode *parent, SuperBlock *block, mode_t mode)
+INode *tmpfs_new_inode(TmpFSINode *parent, SuperBlock *block, string_view name, mode_t mode)
 {
 	TmpFSINode *inode = kzalloc(sizeof(TmpFSINode));
 	if (!inode) {
 		return ERR_PTR(-ENOMEM);
 	}
+	inode->name = name;
 	TmpFSSBInfo *info = block->private;
 
 	FileOps fops = tmpfs_fops;
@@ -183,7 +212,7 @@ int tmpfs_fill_super(SuperBlock *block)
 
 	block->private = info;
 
-	INode *root = tmpfs_new_inode(NULL, block, 0777);
+	INode *root = tmpfs_new_inode(NULL, block, STR_LIT("/"), 0777);
 	if (!root) {
 		kfree(info);
 		return -ENOMEM;

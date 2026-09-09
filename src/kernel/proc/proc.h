@@ -21,7 +21,7 @@ typedef struct Process {
 	AddressSpace vm;
 } Process;
 
-#define DEFAULT_STACK_SIZE (KB(8))
+#define DEFAULT_STACK_SIZE (KB(32))
 
 [[noreturn]]
 void enter_proc(Process *proc);
