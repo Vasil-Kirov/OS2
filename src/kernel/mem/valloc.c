@@ -34,7 +34,7 @@ static inline void flush_tlb() {
     __asm__ volatile("mov cr3, %0" :: "r"(cr3) : "memory");
 }
 
-#define VADDR_FROM_DIR_IDX(IDX) ((void *)((IDX) * PAGE_SIZE * 1024))
+#define VADDR_FROM_DIR_IDX(IDX) ((void *)(((size_t)IDX) * PAGE_SIZE * 1024))
 
 static const size_t KERNEL_DIR_START_IDX = 769;
 void add_kernel_to_address_space(AddressSpace *vm, u32 flags, bool add_boot_page)
@@ -105,7 +105,41 @@ static bool can_address_space_use_table(AddressSpace *vm, u32 dir_entry)
 {
 	if (vm != &kernel_address_space && ((dir_entry & PAGE_FLAG_US) == 0))
 		return false;
-	return !((dir_entry & PAGE_FLAG_PRESENT) == 0 || ((dir_entry & PAGE_FLAG_RW) == 0));
+	return (dir_entry & PAGE_FLAG_PRESENT) != 0 && (dir_entry & PAGE_FLAG_RW) != 0;
+}
+
+void addr_to_page_entry(void *addr, size_t *out_i, size_t *out_j)
+{
+	// addr = (i_start * PAGE_SIZE * 1024) + j_start * PAGE_SIZE
+	// 
+	// i_start * PAGE_SIZE * 1024 = addr - j_start * PAGE_SIZE
+	// j_start * PAGE_SIZE        = addr - i_start * PAGE_SIZE * 1024
+	// 
+	// i_start = (addr/(PAGE_SIZE*1024)) - j_start / 1024
+	// j_start = (addr/PAGE_SIZE) - i_start * 1024
+	// 
+	// 
+	// j_start / 1024 < 1 => j_start // 1024 = 0
+	// => i_start = addr/(PAGE_SIZE*1024)
+
+	size_t i_start = (uintptr_t)addr/(PAGE_SIZE*1024);
+	size_t j_start = (uintptr_t)addr/PAGE_SIZE - (i_start*1024);
+	*out_i = i_start;
+	*out_j = j_start;
+}
+
+PhyAddr vm_get_phy_addr_from_virtual(AddressSpace *vm, void *vaddr)
+{
+	size_t i;
+	size_t j;
+
+	void *page_addr = (void *)ALIGN_DOWN((uintptr_t)vaddr, PAGE_SIZE);
+	size_t off = (u8 *)vaddr - (u8 *)page_addr;
+
+	addr_to_page_entry(page_addr, &i, &j);
+	uintptr_t paddr = ALIGN_DOWN(vm->tables[i].ptr[j], PAGE_SIZE);
+
+	return (PhyAddr){paddr + off};
 }
 
 void *vmmap_virtual_address_from_owned_physical(AddressSpace *vm, uintptr_t physical_address, size_t size, uint16_t flags)
@@ -114,7 +148,6 @@ void *vmmap_virtual_address_from_owned_physical(AddressSpace *vm, uintptr_t phys
 		return NULL;
 
 	ASSERT(ALIGN_DOWN(physical_address, PAGE_SIZE) == physical_address);
-	flags |= PAGE_FLAG_PRESENT;
 	flags &= 0xFFF;
 	size_t needed_pages = (size + PAGE_SIZE-1) / PAGE_SIZE;
 	void *res = NULL;
@@ -221,6 +254,8 @@ void *vmmap_at_virtual_address(AddressSpace *vm, void *vaddr, PhyAddr address, s
 
 void *vmmap_phy_addr(AddressSpace *ap, uintptr_t physical_address, size_t size, uint16_t flags)
 {
+	flags |= PAGE_FLAG_PRESENT;
+
 	uintptr_t page_start = ALIGN_DOWN(physical_address, PAGE_SIZE);
 	PhyAddr paddr = {.addr=page_start};
 	size = ALIGN_UP(size, PAGE_SIZE);
@@ -306,7 +341,7 @@ VMRegion *vm_find_or_add_metdata_region()
 	if (addr.addr == 0)
 		goto unlock;
 
-	MetadataAllocationRegion *region = vmmap_virtual_address_from_owned_physical(&kernel_address_space, addr.addr, sizeof(MetadataAllocationRegion), PAGE_FLAG_RW);
+	MetadataAllocationRegion *region = vmmap_virtual_address_from_owned_physical(&kernel_address_space, addr.addr, sizeof(MetadataAllocationRegion), PAGE_FLAG_RW | PAGE_FLAG_PRESENT);
 	if (!region)
 		goto unlock;
 
@@ -320,6 +355,33 @@ VMRegion *vm_find_or_add_metdata_region()
 unlock:
 	spin_unlock(&vm_metadata.lock);
 	return res;
+}
+
+VMRegion *vm_find_region(AddressSpace *vm, void *addr)
+{
+	addr = (void *)ALIGN_DOWN((uintptr_t)addr, PAGE_SIZE);
+	VMRegion *at = vm->region_head;
+	while (at) {
+		if (addr > at->vaddr) {
+			if ((u8 *)addr < (u8 *)at->vaddr+at->size) {
+				return at;
+			}
+			if (at->right) {
+				at = at->right;
+				continue;
+			}
+			break;
+		} else if (addr < at->vaddr) {
+			if (at->left) {
+				at = at->left;
+				continue;
+			}
+			break;
+		} else if (addr == at->vaddr) {
+			return at;
+		}
+	}
+	return NULL;
 }
 
 void vm_add_region(AddressSpace *vm, VMRegion *region)
@@ -360,18 +422,138 @@ unlock:
 	spin_unlock(&vm->lock);
 }
 
+bool vm_remap_region(VMRegion *region, uintptr_t physical_address, u32 flags, size_t page_off, size_t size)
+{
+	size_t i_idx = 0;
+	size_t j_idx = 0;
+	addr_to_page_entry(region->vaddr, &i_idx, &j_idx);
+	AddressSpace *vm = region->vma;
+	u8 *addr = region->vaddr;
+
+	for(size_t i = 0; i < page_off && i_idx < 1024; ++i) {
+		j_idx += 1;
+		if (j_idx >= 1024) {
+			j_idx = 0;
+			i_idx += 1;
+		}
+		addr += PAGE_SIZE;
+	}
+	
+	if (i_idx == 1024)
+		return false;
+
+	u8 *start_addr = addr;
+	if (start_addr + size > (u8 *)region->vaddr + region->size) {
+		return false;
+	}
+
+	size_t k = 0;
+	while (addr < start_addr + size && i_idx < 1024) {
+		vm->tables[i_idx].ptr[j_idx] = (physical_address + k * PAGE_SIZE) | flags;
+		native_flush_tlb_single((uintptr_t)addr);
+
+		j_idx += 1;
+		if (j_idx >= 1024) {
+			j_idx = 0;
+			i_idx += 1;
+		}
+		addr += PAGE_SIZE;
+		k++;
+	}
+	return true;
+}
+
+u32 page_flags_from_mmap_flags(u32 mmap_flags)
+{
+	u32 flags = PAGE_FLAG_US; // mmap flags are for users, kernel doesn't use mmap
+	if ((mmap_flags & MMAP_NO_ACCESS) == 0)
+		flags |= PAGE_FLAG_PRESENT;
+	if ((mmap_flags & MMAP_READWRITE) != 0)
+		flags |= PAGE_FLAG_RW;
+
+	// @Note: No execution control on 32 bit x86
+	if ((mmap_flags & MMAP_EXECUTE) != 0) {
+		;
+	}
+	return flags;
+}
+
+void *vm_commit_region(VMRegion *region, size_t offs, size_t size)
+{
+	ASSERT(offs % PAGE_SIZE == 0);
+	size = ALIGN_UP(size, PAGE_SIZE);
+
+	size_t rem = region->size - offs;
+	if (rem < size)
+		size = rem;
+
+	ASSERT(size % PAGE_SIZE == 0);
+
+	PhyAddr addr = pmm_alloc(size, PMM_None);
+	// @TODO: kill procs that use too much memory
+	// Vasko - 18/10/2026
+	if (addr.addr == 0)
+		return NULL;
+
+	u32 flags = page_flags_from_mmap_flags(region->mmap_flags);
+	if (!vm_remap_region(region, addr.addr, flags, offs/PAGE_SIZE, size))
+		return NULL;
+	return region->vaddr;
+}
+
+void *vm_reserve(AddressSpace *vm, size_t size, int fd, u32 mmap_flags)
+{
+	spin_lock(&vm->lock);
+	size = ALIGN_UP(size, PAGE_SIZE);
+
+	VMRegion *region = vm_find_or_add_metdata_region();
+	if (!region) {
+		spin_unlock(&vm->lock);
+		return NULL;
+	}
+
+	void *vaddr = vmmap_virtual_address_from_owned_physical(vm, 0, size, PAGE_FLAG_AVL_OS_RESERVED);
+	if (!vaddr) {
+		region->type = VMArea_Unused;
+		spin_unlock(&vm->lock);
+		return NULL;
+	}
+
+	region->vaddr = vaddr;
+	region->vma = vm;
+	if (fd != -1) {
+		region->type = VMArea_FD;
+		region->fd = fd;
+	} else {
+		region->type = VMArea_AllocOnAccess;
+	}
+	region->size = size;
+	region->mmap_flags = mmap_flags;
+
+	spin_unlock(&vm->lock);
+	vm_add_region(vm, region);
+
+	return vaddr;
+}
+
 void *vmmap_(AddressSpace *vm, void *ataddr, size_t size, u32 flags, PhyAddr *out_addr)
 {
+	spin_lock(&vm->lock);
+	flags |= PAGE_FLAG_PRESENT;
+
 	size += (uintptr_t)ataddr - ALIGN_DOWN((uintptr_t)ataddr, PAGE_SIZE);
 	size = ALIGN_UP(size, PAGE_SIZE);
 	PhyAddr addr = pmm_alloc(size, PMM_None);
-	if (addr.addr == 0)
+	if (addr.addr == 0) {
+		spin_unlock(&vm->lock);
 		return NULL;
+	}
 	ASSERT(addr.addr % PAGE_SIZE == 0);
 
 	VMRegion *region = vm_find_or_add_metdata_region();
 	if (!region) {
 		pmm_free(addr, size);
+		spin_unlock(&vm->lock);
 		return NULL;
 	}
 
@@ -385,6 +567,7 @@ void *vmmap_(AddressSpace *vm, void *ataddr, size_t size, u32 flags, PhyAddr *ou
 	if (!vaddr) {
 		pmm_free(addr, size);
 		region->type = VMArea_Unused;
+		spin_unlock(&vm->lock);
 		return NULL;
 	}
 
@@ -393,7 +576,9 @@ void *vmmap_(AddressSpace *vm, void *ataddr, size_t size, u32 flags, PhyAddr *ou
 	region->paddr = addr;
 	region->vaddr = vaddr;
 	region->size = size;
+	region->mmap_flags = 0;
 
+	spin_unlock(&vm->lock);
 	vm_add_region(vm, region);
 
 	if (out_addr)
@@ -454,21 +639,18 @@ void vm_remove_region(AddressSpace *vm, VMRegion *region)
 	region->type = VMArea_Unused;
 }
 
+void vmunmap_region(VMRegion *region)
+{
+	vmunmap_raw(region->vma, region->vaddr, region->size, true);
+	vm_remove_region(region->vma, region);
+}
+
 void vmunmap(AddressSpace *vm, void *ptr)
 {
 	spin_lock(&vm->lock);
-	VMRegion *at = vm->region_head;
-	while (at) {
-		if (ptr > at->vaddr) {
-			at = at->right;
-		} else if (ptr < at->vaddr) {
-			at = at->left;
-		} else {
-			ASSERT(ptr == at->vaddr);
-			vmunmap_raw(vm, ptr, at->size, true);
-			vm_remove_region(vm, at);
-			break;
-		}
+	VMRegion *region = vm_find_region(vm, ptr);
+	if (region) {
+		vmunmap_region(region);
 	}
 	spin_unlock(&vm->lock);
 }

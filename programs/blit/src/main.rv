@@ -31,10 +31,7 @@ draw_rect :: fn(display: i32, x: u16, y: u16, w: u16, h: u16, color: u32) {
 }
 
 _start :: fn() #foreign #link="_start" {
-	tty := syscall(.open, "/dev/tty0", 0);
-	if tty < 0 {
-		for {}
-	}
+	tty := STDOUT_FD;
 	print_num(tty, "Child spawned: ", syscall(.getpid));
 
 	display := syscall(.open, "/dev/display", 0);

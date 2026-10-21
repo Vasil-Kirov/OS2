@@ -18,11 +18,20 @@ void scheduler_add_proc(Process *proc)
 {
 	if (current_proc == NULL) {
 		current_proc = proc;
+		current_proc->prev = current_proc;
 		current_proc->next = current_proc;
 	} else {
 		proc->next = current_proc->next;
+		proc->prev = current_proc;
 		current_proc->next = proc;
 	}
+}
+
+void scheduler_remove_current()
+{
+	ASSERT(current_proc->pid != 0);
+	current_proc->next->prev = current_proc->prev;
+	current_proc->prev->next = current_proc->next;
 }
 
 void scheduler_tick(InterruptFrame *frame)
@@ -41,6 +50,7 @@ void enter_proc(Process *proc)
 	tss.esp0 = proc->kernel_stack_top;
 	scheduler_add_proc(proc);
 	set_current_proc(proc);
+	kgdt_set_tls(proc->tp);
 	enter_proc_((uintptr_t)proc->entry, proc->stack_top, proc->vm.page_directory_paddr.addr);
 }
 

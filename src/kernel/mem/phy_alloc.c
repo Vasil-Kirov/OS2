@@ -104,7 +104,7 @@ void pmm_init(size_t region_count)
 
 	// Cannot use kmem_map_phy_addr here because it requres the physical page allocator
 	// to be online
-	void *vaddr = vmmap_virtual_address_from_owned_physical(&kernel_address_space, init_addr.addr, init_size, PAGE_FLAG_RW);
+	void *vaddr = vmmap_virtual_address_from_owned_physical(&kernel_address_space, init_addr.addr, init_size, PAGE_FLAG_RW | PAGE_FLAG_PRESENT);
 	assert(vaddr);
 	BinaryStream bump = {};
 	bs_init(&bump, vaddr, init_size);
@@ -452,6 +452,8 @@ unlock:
 
 void pmm_free(PhyAddr addr, size_t size)
 {
+	if (addr.addr == 0)
+		return;
 	spin_lock(&pmm_lock);
 
 	PMMBitmap *it;

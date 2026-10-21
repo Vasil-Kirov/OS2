@@ -109,6 +109,9 @@ typedef struct File {
 	INode *inode;
 	u64 offset;
 	void *priv;
+
+	Spinlock lock;
+	_Atomic unsigned ref_counter;
 } File;
 
 typedef struct {
@@ -135,6 +138,7 @@ void vfs_close(File *f);
 ssize_t vfs_read(File *file, void *buf, size_t size);
 ssize_t vfs_readdir(File *file, void *buf, size_t size);
 ssize_t vfs_write(File *file, void *buf, size_t size);
+File *vfs_dup(File *f);
 
 int vfs_mount_root(const string_view fs_name);
 int vfs_mount(const string_view fs_name, string_view path, string_view dev, mode_t mode);

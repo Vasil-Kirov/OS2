@@ -26,6 +26,33 @@ LoadProcessError validate_header(Elf32_Ehdr *header)
 	return LoadProc_Ok;
 }
 
+static void *map_at_and_copy(AddressSpace *vm, void *vaddr, size_t copy_size, size_t zero_size, void *buf, void **out_tmp, void **out_tmp_free)
+{
+	size_t total_size = copy_size+zero_size;
+	PhyAddr paddr = {};
+	void *ptr = vmmap_(vm, vaddr, total_size, PAGE_FLAG_US | PAGE_FLAG_RW | PAGE_FLAG_PRESENT, &paddr);
+	if (!ptr)
+		return NULL;
+
+	size_t off = (uintptr_t)vaddr & (PAGE_SIZE-1);
+	void *tmp = vmmap_virtual_address_from_owned_physical(&kernel_address_space, paddr.addr, total_size+off, PAGE_FLAG_RW | PAGE_FLAG_PRESENT);
+	if (!tmp) {
+		vmunmap(vm, ptr);
+		return NULL;
+	}
+	void *tmp_free = tmp;
+	tmp = (u8 *)tmp + off;
+	memcpy(tmp, buf, copy_size);
+	memset((u8 *)tmp+copy_size, 0, zero_size);
+	if (out_tmp && out_tmp_free) {
+		*out_tmp = tmp;
+		*out_tmp_free = tmp_free;
+	} else {
+		vmunmap_raw(&kernel_address_space, tmp_free, total_size, false);
+	}
+	return ptr;
+}
+
 LoadProcessError load_proc(Process *proc, string_view path)
 {
 	LoadProcessError res = LoadProc_Ok;
@@ -83,8 +110,8 @@ LoadProcessError load_proc(Process *proc, string_view path)
 	proc->kernel_stack_top = (uintptr_t)proc->kernel_stack + PAGE_SIZE*4;
 
 	kprintf("Loading proc %[str]", path);
-	kprintf("\tStack:   %p", proc->stack_top);
-	kprintf("\tKStack:  %p", proc->kernel_stack_top);
+	kprintf("\tStack:   %p-%p", proc->stack, proc->stack_top);
+	kprintf("\tKStack:  %p-%p", proc->kernel_stack, proc->kernel_stack_top);
 
 
 
@@ -104,38 +131,89 @@ LoadProcessError load_proc(Process *proc, string_view path)
 		{
 			case PT_LOAD:
 			{
-				PhyAddr paddr = {};
-				void *seg = vmmap_(&proc->vm, (void *)ph->p_vaddr, ph->p_memsz, PAGE_FLAG_US | PAGE_FLAG_RW | PAGE_FLAG_PRESENT, &paddr);
+				if (!bs_seek(&bs, ph->p_offset)) {
+					res = LoadProc_FileCorrupt;
+					goto err_free_vm;
+				}
+				void * seg = map_at_and_copy(&proc->vm, (void *)ph->p_vaddr, ph->p_filesz, ph->p_memsz-ph->p_filesz, bs.at, NULL, NULL);
 				if (!seg) {
 					res = LoadProc_OOM;
 					goto err_free_vm;
 				}
-				if (!bs_seek(&bs, ph->p_offset)) {
-					vmunmap(&proc->vm, seg);
+				kprintf("\tSegment: %p-%p", seg, (u8 *)seg + ph->p_memsz);
+			} break;
+			case PT_TLS:
+			{
+				proc->tls = (ThreadLocaLStorageInfo) {
+					.template_ptr = (void __user *)ph->p_vaddr,
+					.file_sz = ph->p_filesz,
+					.mem_sz = ph->p_memsz,
+					.align = ph->p_align,
+				};
+			} break;
+		}
+	}
+	for (Elf32_Half i = 0; i < header->e_shnum; ++i) {
+		if (!bs_seek(&bs, header->e_shoff + i*header->e_shentsize)) {
+			res = LoadProc_FileCorrupt;
+			goto err_free_vm;
+		}
 
+		Elf32_Shdr *sh = bs_rsz(&bs, sizeof(Elf32_Shdr));
+		switch (sh->sh_type)
+		{
+			case SHT_SYMTAB:
+			{
+				size_t entry_count = sh->sh_size / sh->sh_entsize;
+				if (!bs_seek(&bs, sh->sh_offset)) {
 					res = LoadProc_FileCorrupt;
 					goto err_free_vm;
 				}
-
-				size_t off = ph->p_vaddr & (PAGE_SIZE-1);
-				void *tmp = vmmap_virtual_address_from_owned_physical(&kernel_address_space, paddr.addr, ph->p_memsz+off, PAGE_FLAG_RW);
-				if (!tmp) {
-					vmunmap(&proc->vm, seg);
-
-					res = LoadProc_OOM;
-					goto err_free_vm;
-				}
-				tmp = (u8 *)tmp + off;
-				memcpy(tmp, bs.at, ph->p_filesz);
-				memset(tmp+ph->p_filesz, 0, ph->p_memsz-ph->p_filesz);
-				vmunmap_raw(&kernel_address_space, tmp, ph->p_memsz, false);
-				kprintf("\tSegment: %p", seg);
+				Elf32_Sym *sym = bs_rsz(&bs, sizeof(Elf32_Sym));
+				// @TODO:
+				(void)sym;
+				(void)entry_count;
 			} break;
 		}
 	}
 
 	for (size_t i = 0; i < MAX_FDS; ++i)
 		proc->fds[i] = NULL;
+
+	if (proc->tls.mem_sz > 0) {
+		constexpr size_t TCB_SIZE = 64;
+
+		size_t align = proc->tls.align ? proc->tls.align : 4;
+		size_t memsz = ALIGN_UP(proc->tls.mem_sz, align);
+		size_t zero = memsz - proc->tls.file_sz + TCB_SIZE;
+
+		PhyAddr template_paddr = vm_get_phy_addr_from_virtual(&proc->vm, proc->tls.template_ptr);
+		uintptr_t page_paddr = ALIGN_DOWN(template_paddr.addr, PAGE_SIZE);
+		size_t off = template_paddr.addr - page_paddr;
+		void *tmp = vmmap_virtual_address_from_owned_physical(&kernel_address_space, page_paddr, proc->tls.file_sz+off, PAGE_FLAG_RW | PAGE_FLAG_PRESENT);
+		if (!tmp) {
+			res = LoadProc_FileCorrupt;
+			goto err_free_vm;
+		}
+
+		size_t to_free_size = memsz+TCB_SIZE;
+		void *kernel_map = NULL;
+		void *kernel_map_to_free = NULL;
+		void *p = map_at_and_copy(&proc->vm, NULL, proc->tls.file_sz, zero, (u8 *)tmp+off, &kernel_map, &kernel_map_to_free);
+
+		vmunmap_raw(&kernel_address_space, tmp, proc->tls.file_sz+off, false);
+
+		if (!p) {
+			vmunmap_raw(&kernel_address_space, kernel_map_to_free, to_free_size, false);
+			res = LoadProc_FileCorrupt;
+			goto err_free_vm;
+		}
+
+		proc->tp = (u8 *)p + memsz;
+		void **self = (void **)((u8 *)kernel_map+memsz);
+		*self = proc->tp;
+		vmunmap_raw(&kernel_address_space, kernel_map_to_free, to_free_size, false);
+	}
 
 /*
     u32 es, ds;
@@ -151,6 +229,7 @@ LoadProcessError load_proc(Process *proc, string_view path)
 
 	static int pid = 0;
 	proc->pid = atomic_increment(&pid);
+	proc->parent = -1;
 	proc->entry = (void *)header->e_entry;
 
 	InterruptFrame *frame = (InterruptFrame *)(proc->kernel_stack_top - sizeof(InterruptFrame));

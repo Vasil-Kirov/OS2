@@ -7,11 +7,12 @@ KPrintConsole kprint_console;
 static void print_ptr(uintptr_t val) {
 	const char hex[] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'};
 	const size_t width = sizeof(uintptr_t) * 2;
+	kprint_console.write_char('0');
+	kprint_console.write_char('x');
 	if (val == 0) {
 		for (size_t i = 0; i < width; ++i) {
 			kprint_console.write_char('0');
 		}
-		kprint_console.write_char('h');
 		return;
 	}
 
@@ -29,7 +30,6 @@ static void print_ptr(uintptr_t val) {
 	for (size_t i = 0; i < count; ++i) {
 		kprint_console.write_char(temp[count - i - 1]);
 	}
-	kprint_console.write_char('h');
 }
 
 static void print_int(int val) {

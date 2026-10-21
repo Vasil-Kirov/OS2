@@ -34,7 +34,14 @@ void dma_unmap(void *vaddr);
 #define PAGE_FLAG_US (1 << 2) // (User=1/Supervisor=0)
 #define PAGE_FLAG_WT (1 << 3)
 #define PAGE_FLAG_CD (1 << 4)
+#define PAGE_FLAG_AVL_OS_RESERVED (1 << 9)
 #define PAGE_TABLE_ENTRY_MASK (0xFF)
+
+#define MMAP_NO_ACCESS (1<<0)
+#define MMAP_READWRITE (1<<1)
+//#define MMAP_READ      (1<<2)
+#define MMAP_EXECUTE   (1<<3)
+#define MMAP_ANON      (1<<4)
 
 #define MEM_FIRST_AVAIL_PAGE (4)
 
@@ -52,6 +59,8 @@ struct AddressSpace;
 typedef enum {
 	VMArea_Unused,
 	VMArea_RAM,
+	VMArea_AllocOnAccess,
+	VMArea_FD,
 } VMAreaType;
 
 typedef struct VMRegion {
@@ -60,6 +69,8 @@ typedef struct VMRegion {
 	PhyAddr paddr;
 	void *vaddr;
 	size_t size;
+	u32 mmap_flags;
+	int fd; // for VMArea_FD
 	struct VMRegion *left;
 	struct VMRegion *right;
 	struct VMRegion *parent;
@@ -98,17 +109,22 @@ typedef enum {
 
 MakeAddressSpaceError make_address_space(AddressSpace *vm);
 void free_address_space(AddressSpace *vm);
+void *vm_commit_region(VMRegion *region, size_t offs, size_t size);
+VMRegion *vm_find_region(AddressSpace *vm, void *addr);
+PhyAddr vm_get_phy_addr_from_virtual(AddressSpace *vm, void *vaddr);
 
 void *vmmap_(AddressSpace *vm, void *ataddr, size_t size, u32 flags, PhyAddr *out_addr);
 void *vmmap(AddressSpace *vm, size_t size, u32 flags);
+void *vm_reserve(AddressSpace *vm, size_t size, int fd, u32 flags);
 void vmunmap(AddressSpace *vm, void *ptr);
 
-extern AddressSpace kernel_address_space;
 void *vmmap_virtual_address_from_owned_physical(AddressSpace *ap, uintptr_t physical_address, size_t size, uint16_t flags);
 void vmunmap_raw(AddressSpace *ap, void *virtual_address, size_t size, bool physical_free);
 
 ssize_t copy_from_user(void *dst, const void __user *src, size_t len);
 ssize_t copy_to_user(void __user *dst, const void *src, size_t len);
+
+extern AddressSpace kernel_address_space;
 
 #endif // _KMEM_H
 

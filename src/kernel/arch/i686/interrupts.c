@@ -1,5 +1,6 @@
 #include "interrupts.h"
 
+#include <stack_trace.h>
 #include <kprintf.h>
 #include <kmem.h>
 #include <io.h>
@@ -285,6 +286,7 @@ InterruptFrame *interrupt_handler(InterruptFrame *f)
 		if (proc)
 			pid = proc->pid;
 		kprintf("CPU Exception PID: %d, vec: %d, err: %d, cr2: %p", pid, f->vector, f->err_code, cr2);
+		trace_stack(f->ebp);
 		exception_handler();
 		return f; // no EOI
 	}
@@ -303,6 +305,7 @@ InterruptFrame *interrupt_handler(InterruptFrame *f)
 						"mov cr3, %0"
 						:: "r"(cr3) : "memory"
 						);
+				kgdt_set_tls(proc->tp);
 			}
 		} break;
 		case 0x80: // syscall

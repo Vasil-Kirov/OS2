@@ -1,39 +1,33 @@
 module main;
 
-_ :: #import sys;
+_ :: #import misc;
+#import os;
+_ :: #import vos;
 
-
-
-
-_start :: fn() #foreign #link="_start" {
-	tty := open("/dev/tty0", 0);
-	if tty < 0 {
-		for {}
-	}
-	writes(tty, "Opening root...\n");
-	root := open("/", 0);
+main :: fn() {
+	println("Opening root...");
+	root := open("/", .ReadOnly);
 	if root < 0 {
-		writes(tty, "Failed to open root!\n");
+		println("Failed to open root: %", root);
 		for {}
 	}
-	writes(tty, "Initial process started!\n");
+	println("Proc started: %...", root);
 
-	buf: [1024]string;
-	read := readdir(root, buf[:]);
+	p, ok := os.alloc(size_of(string) * 1024, .Reserve | .Commit, .Read | .Write);
+	if !ok {
+		println("Failed to allocate buffer.");
+		for {}
+	}
+	buf := p as *string;
+	read := readdir(root, buf[:1024]);
 	if read < 0 {
-		//syscall(.write, tty, "Failed to read root!\n");
-		print_num(tty, "Failed to read root!", read);
+		println("Failed to read root: %", read);
 		for {}
 	}
-	writes(tty, "Printing dirs...\n");
 	dirs := buf[:read];
-	for dir in dirs {
-		writes(tty, "\t");
-		writes(tty, dir);
-		writes(tty, "\n");
-	}
+	println("Dirs: %", dirs);
 
-	writes(tty, "Printed!");
+	println("Initiated!");
 	for {
 	}
 }

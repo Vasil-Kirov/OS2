@@ -22,11 +22,11 @@ static void *kbuf_matching_len(const size_t user_len)
 {
 #define MAX_USER_BUF (MB(64))
 	if (user_len > MAX_USER_BUF)
-		return ERR_PTR(-EINVAL);
+		return ERR_PTR(-ErrSizeTooBig);
 
 	void *kbuf = kmalloc(user_len);
 	if (!kbuf)
-		return ERR_PTR(-ENOMEM);
+		return ERR_PTR(-ErrOOM);
 	return kbuf;
 }
 
@@ -50,7 +50,7 @@ u32 handle_syscall(u32 eax, u32 ebx, u32 ecx, u32 edx, u32 esi, u32 edi)
 
 			Process *proc = get_current_proc();
 			if (!verify_fd(proc, fd))
-				return -EBADF;
+				return -ErrBadFD;
 			if (buf_len == 0)
 				return 0;
 
@@ -61,7 +61,7 @@ u32 handle_syscall(u32 eax, u32 ebx, u32 ecx, u32 edx, u32 esi, u32 edi)
 			ssize_t read = vfs_read(proc->fds[fd], kbuf, buf_len);
 			if (read < 0) {
 				kfree(kbuf);
-				return read;
+				return -ErrReadFailed;
 			}
 			ssize_t copied = copy_to_user(buf, kbuf, read);
 			kfree(kbuf);
@@ -75,24 +75,26 @@ u32 handle_syscall(u32 eax, u32 ebx, u32 ecx, u32 edx, u32 esi, u32 edi)
 
 			Process *proc = get_current_proc();
 			if (!verify_fd(proc, fd))
-				return -EBADF;
+				return -ErrBadFD;
 
 			if (buf_len == 0)
 				return 0;
 
 			void *kbuf = kmalloc(buf_len);
 			if (!kbuf)
-				return -ENOMEM;
+				return -ErrOOM;
 
 			ssize_t copied = copy_from_user(kbuf, buf, buf_len);
 			if (copied < 0) {
 				kfree(kbuf);
-				return copied;
+				return -ErrInvalAddr;
 			}
 
-			ssize_t writen = vfs_write(proc->fds[fd], kbuf, buf_len);
+			ssize_t written = vfs_write(proc->fds[fd], kbuf, buf_len);
 			kfree(kbuf);
-			return writen;
+			if (written < 0)
+				return -ErrWriteFailed;
+			return written;
 		} break;
 		case SYS_open:
 		{
@@ -102,14 +104,14 @@ u32 handle_syscall(u32 eax, u32 ebx, u32 ecx, u32 edx, u32 esi, u32 edi)
 			(void)flags;
 
 			if (name_len > KERNEL_MAX_NAME_LEN) {
-				return -EINVAL;
+				return -ErrSizeTooBig;
 			}
 
 			ssize_t res = copy_from_user(buf, name_ptr, name_len);
 			if (res < 0)
-				return res;
+				return -ErrInvalAddr;
 			if (res < (ssize_t)name_len)
-				return -EIO;
+				return -ErrReadFailed;
 
 			int fd = -1;
 			Process *proc = get_current_proc();
@@ -120,13 +122,13 @@ u32 handle_syscall(u32 eax, u32 ebx, u32 ecx, u32 edx, u32 esi, u32 edi)
 				}
 			}
 			if (fd == -1) {
-				return -EMFILE;
+				return -ErrTooManyFiles;
 			}
 
 			const string_view name = {res, name_ptr};
 			File *f = vfs_open(name);
 			if (IS_ERR_OR_NULL(f))
-				return PTR_ERR_OR(f, -ENOMEM);
+				return PTR_ERR_OR(f, -ErrOOM);
 
 			proc->fds[fd] = f;
 			return fd;
@@ -136,7 +138,7 @@ u32 handle_syscall(u32 eax, u32 ebx, u32 ecx, u32 edx, u32 esi, u32 edi)
 			int fd = ebx;
 			Process *proc = get_current_proc();
 			if (!verify_fd(proc, fd))
-				return -EBADF;
+				return -ErrBadFD;
 
 			vfs_close(proc->fds[fd]);
 			return 0;
@@ -147,33 +149,59 @@ u32 handle_syscall(u32 eax, u32 ebx, u32 ecx, u32 edx, u32 esi, u32 edi)
 			const size_t path_len = ecx;
 
 			if (path_len > KERNEL_MAX_NAME_LEN) {
-				return -EINVAL;
+				return -ErrSizeTooBig;
 			}
 
 			ssize_t res = copy_from_user(buf, path_ptr, path_len);
 			if (res < 0)
 				return res;
 			if (res < (ssize_t)path_len)
-				return -EIO;
+				return -ErrReadFailed;
 
 			Process *proc = kzalloc(sizeof(Process));
 			if (!proc)
-				return -ENOMEM;
+				return -ErrOOM;
 
 			const string_view path = {res, path_ptr};
 
 			LoadProcessError err = load_proc(proc, path);
+			if (err != LoadProc_Ok)
+				kfree(proc);
 			switch (err)
 			{
 				case LoadProc_Ok:
 				break;
+
 				case LoadProc_OOM:
-				kfree(proc);
-				return -ENOMEM;
+				return -ErrOOM;
+
+				case LoadProc_CorruptHeader:
+				case LoadProc_FileCorrupt:
+				return -ErrCorruptExec;
+
+				case LoadProc_FileNotFound:
+				return -ErrFileNotFound;
+
+				case LoadProc_FileReadFailed:
+				return -ErrReadFailed;
+
+				case LoadProc_Incompatible:
+				return -ErrIncompatibleExec;
+
+				case LoadProc_NotExecutable:
+				return -ErrNotExec;
+
 				default:
-				kfree(proc);
-				return -EINVAL;
+				return -ErrNotExec;
 			}
+			Process *parent = get_current_proc();
+			if (!parent)
+				return -ErrUnexpectedSystemState;
+
+			proc->parent = parent->pid;
+			proc->fds[0] = vfs_dup(parent->fds[0]);
+			proc->fds[1] = vfs_dup(parent->fds[1]);
+			proc->fds[2] = vfs_dup(parent->fds[2]);
 
 			scheduler_add_proc(proc);
 			return proc->pid;
@@ -182,7 +210,7 @@ u32 handle_syscall(u32 eax, u32 ebx, u32 ecx, u32 edx, u32 esi, u32 edi)
 		{
 			Process *proc = get_current_proc();
 			if (!proc)
-				return -EINVAL;
+				return -ErrUnexpectedSystemState;
 			return proc->pid;
 		} break;
 		case SYS_readdir:
@@ -193,11 +221,11 @@ u32 handle_syscall(u32 eax, u32 ebx, u32 ecx, u32 edx, u32 esi, u32 edi)
 
 			Process *proc = get_current_proc();
 			if (!verify_fd(proc, fd))
-				return -EBADF;
+				return -ErrBadFD;
 			if (buf_len == 0)
 				return 0;
 			if (!is_ssize_fit(buf_len))
-				return -EINVAL;
+				return -ErrSizeTooBig;
 
 			void *kbuf = kbuf_matching_len(buf_len*sizeof(DirInfo));
 			if (IS_ERR(kbuf))
@@ -207,14 +235,19 @@ u32 handle_syscall(u32 eax, u32 ebx, u32 ecx, u32 edx, u32 esi, u32 edi)
 				kfree(kbuf);
 				return read;
 			}
+			if (buf == NULL) {
+				kfree(kbuf);
+				return read;
+			}
+
 			DirInfo *arr = kbuf;
 			for (ssize_t i = 0; i < read; ++i) {
-				void *user_name = vmmap(&proc->vm, arr[i].name_len, PAGE_FLAG_RW);
+				void *user_name = vmmap(&proc->vm, arr[i].name_len, PAGE_FLAG_RW | PAGE_FLAG_US);
 				if (!user_name) {
 					vfs_free_readdir_entries_vm(&proc->vm, arr, i);
 					vfs_free_readdir_entries(arr + i, read-i);
 					kfree(kbuf);
-					return -ENOMEM;
+					return -ErrOOM;
 				}
 				memcpy(user_name, arr[i].name, arr[i].name_len);
 				kfree(arr[i].name);
@@ -228,12 +261,46 @@ u32 handle_syscall(u32 eax, u32 ebx, u32 ecx, u32 edx, u32 esi, u32 edi)
 				vfs_free_readdir_entries_vm(&proc->vm, arr, read);
 				kfree(kbuf);
 				if (copied < 0)
-					return copied;
-				else
-					return -EIO;
+					return -ErrInvalAddr;
 			}
 			kfree(kbuf);
 			return to_copy;
+		} break;
+		case SYS_mmap:
+		{
+			const size_t size = ebx;
+			const u32 flags = ecx;
+			int fd = edx;
+
+			Process *proc = get_current_proc();
+			if ((flags & MMAP_ANON) == 0 && !verify_fd(proc, fd))
+				return 0;
+			if (size == 0)
+				return 0;
+
+			if (flags & MMAP_ANON)
+				fd = -1;
+
+			return (u32)vm_reserve(&proc->vm, size, fd, flags);
+		} break;
+		case SYS_munmap:
+		{
+			const uintptr_t ptr = ebx;
+			if (ptr == 0)
+				return 0;
+
+			Process *proc = get_current_proc();
+			vmunmap(&proc->vm, (void *)ptr);
+
+			return 0;
+		} break;
+		case SYS_exit:
+		{
+			const u32 code = ebx;
+			(void)code;
+			// @TODO:
+			scheduler_remove_current();
+			
 		} break;
 	}
 	return -ENOSYS;

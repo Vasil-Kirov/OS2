@@ -4,6 +4,7 @@ global enter_proc_
 
 USER_CS equ 3 << 3 | 3
 USER_DS equ 4 << 3 | 3
+USER_TLS equ 6 << 3 | 3
 
 section .text
 
@@ -19,17 +20,20 @@ enter_proc_:
 	mov edx, [esp + 12]
 	mov cr3, edx
 
+	mov dx, USER_TLS
+    mov gs, dx
+
     mov dx, USER_DS
     mov ds, dx
     mov es, dx
     mov fs, dx
-    mov gs, dx
 
 	push DWORD USER_DS ; ss
 	push ecx           ; esp
 	push DWORD 0x202   ; eflags = int enabled, reserved=1
 	push DWORD USER_CS ; cs
 	push eax           ; eip = entry
+	xor ebx, ebx       ; null stack frame
 	iret
 
 

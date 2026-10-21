@@ -2,6 +2,7 @@
 #include <kcommon.h>
 #include <kmalloc.h>
 #include <errno.h>
+#include <stdatomic.h>
 
 VFS vfs;
 
@@ -98,11 +99,20 @@ DirEntry *vfs_find(string_view path)
 	return at;
 }
 
+File *vfs_dup(File *f)
+{
+	f->ref_counter++;
+	return f;
+}
+
 File *vfs_open(string_view path)
 {
 	File *f = kzalloc(sizeof(File));
 	if (!f)
 		return ERR_PTR(-ENOMEM);
+
+	f->ref_counter++;
+	f->lock = SPINLOCK_INIT;
 
 	DirEntry *d = vfs_find(path);
 	if (IS_ERR_OR_NULL(d)) {
@@ -128,29 +138,41 @@ void vfs_close(File *f)
 	if (IS_ERR_OR_NULL(f))
 		return;
 
-	f->fop.close(f);
-	kfree(f);
+	unsigned ref = atomic_fetch_sub(&f->ref_counter, 1);
+	if (ref == 1) {
+		f->fop.close(f);
+		kfree(f);
+	}
 }
 
 ssize_t vfs_readdir(File *file, void *buf, size_t size)
 {
 	if (file->fop.readdir == NULL)
 		return -EINVAL;
-	return file->fop.readdir(file, buf, size);
+	spin_lock(&file->lock);
+	ssize_t r = file->fop.readdir(file, buf, size);
+	spin_unlock(&file->lock);
+	return r;
 }
 
 ssize_t vfs_read(File *file, void *buf, size_t size)
 {
 	if (file->fop.read == NULL)
 		return -EINVAL;
-	return file->fop.read(file, buf, size);
+	spin_lock(&file->lock);
+	ssize_t r = file->fop.read(file, buf, size);
+	spin_unlock(&file->lock);
+	return r;
 }
 
 ssize_t vfs_write(File *file, void *buf, size_t size)
 {
 	if (file->fop.write == NULL)
 		return -EINVAL;
-	return file->fop.write(file, buf, size);
+	spin_lock(&file->lock);
+	ssize_t r = file->fop.write(file, buf, size);
+	spin_unlock(&file->lock);
+	return r;
 }
 
 void vfs_init()

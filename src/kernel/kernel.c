@@ -159,6 +159,10 @@ void kernel_main(uint32_t magic, multiboot_info *mb_info)
 		panic("Failed to load init proc!");
 	}
 
+	init_proc->fds[0] = vfs_open(STR_LIT("/dev/tty0"));
+	init_proc->fds[1] = vfs_open(STR_LIT("/dev/tty0"));
+	init_proc->fds[2] = vfs_open(STR_LIT("/dev/tty0"));
+
 	kprintf("Initializing display...");
 	r = display_init(fb_tag);
 	if (r != 0) {
