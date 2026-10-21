@@ -23,7 +23,7 @@ u32 kernel_page_tables_data[255*1024] __attribute__((aligned(0x1000)));
 
 AddressSpace kernel_address_space = {};
 
-static inline void native_flush_tlb_single(uintptr_t addr) {
+static inline void flush_tlb_single(uintptr_t addr) {
    __asm__ volatile("invlpg [%0]" ::"r" (addr) : "memory");
 }
 
@@ -187,7 +187,7 @@ void *vmmap_virtual_address_from_owned_physical(AddressSpace *vm, uintptr_t phys
 					for(size_t ati = i_start; ati <= i; ++ati) {
 						for(size_t atj = j_start; atj < 1024; ++atj) {
 							vm->tables[ati].ptr[atj] = (physical_address + k * PAGE_SIZE) | flags;
-							native_flush_tlb_single((uintptr_t)res + k * PAGE_SIZE);
+							flush_tlb_single((uintptr_t)res + k * PAGE_SIZE);
 							++k;
 							if(ati == i && atj == j)
 								break;
@@ -450,7 +450,7 @@ bool vm_remap_region(VMRegion *region, uintptr_t physical_address, u32 flags, si
 	size_t k = 0;
 	while (addr < start_addr + size && i_idx < 1024) {
 		vm->tables[i_idx].ptr[j_idx] = (physical_address + k * PAGE_SIZE) | flags;
-		native_flush_tlb_single((uintptr_t)addr);
+		flush_tlb_single((uintptr_t)addr);
 
 		j_idx += 1;
 		if (j_idx >= 1024) {
@@ -498,6 +498,8 @@ void *vm_commit_region(VMRegion *region, size_t offs, size_t size)
 	u32 flags = page_flags_from_mmap_flags(region->mmap_flags);
 	if (!vm_remap_region(region, addr.addr, flags, offs/PAGE_SIZE, size))
 		return NULL;
+
+	memset((u8 *)region->vaddr+offs, 0, size);
 	return region->vaddr;
 }
 
