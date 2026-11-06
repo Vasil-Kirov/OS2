@@ -3,7 +3,7 @@
 typedef enum {
 	SYS_read,   // (fd, buf, size) -> read
 	SYS_write,  // (fd, buf, size) -> wirrten
-	SYS_open,   // (name, name_len, flags) -> fd
+	SYS_open,   // (name, name_len, flags, /* mode */...) -> fd
 	SYS_close,  // (fd)
 	SYS_spawn,  // (path, path_len) -> pid
 	SYS_getpid, // () -> pid
@@ -34,5 +34,15 @@ enum SysErr {
 	ErrIncompatibleExec = 11,
 	
 	ErrUnexpectedSystemState = 12,
+};
+
+enum OpenFlags {
+	OpenReadOnly   = 0x00,
+	OpenWriteOnly  = 0x01,
+	OpenReadWrite  = 0x02,
+	OpenCreate     = 0x04,
+	OpenAlwaysOpen = 0x08,
+	OpenTruncate   = 0x10,
+	OpenAppend     = 0x20,
 };
 

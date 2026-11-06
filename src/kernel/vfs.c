@@ -3,6 +3,7 @@
 #include <kmalloc.h>
 #include <errno.h>
 #include <stdatomic.h>
+#include <proc/proc.h>
 
 VFS vfs;
 
@@ -105,7 +106,7 @@ File *vfs_dup(File *f)
 	return f;
 }
 
-File *vfs_open(string_view path)
+File *vfs_open(string_view path, Credentials creds, u32 flags)
 {
 	File *f = kzalloc(sizeof(File));
 	if (!f)

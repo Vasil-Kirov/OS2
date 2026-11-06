@@ -3,11 +3,17 @@
 #define _PROC_H
 
 #include <interrupts.h>
-#include <vfs.h>
 #include <kcommon.h>
 #include <kmem.h>
 
 #define MAX_FDS (64)
+
+struct File;
+
+typedef struct {
+	u32 uid;
+	u32 gid;
+} Credentials;
 
 typedef struct {
 	void __user *template_ptr;
@@ -26,12 +32,13 @@ typedef struct Process {
 	uintptr_t kernel_stack_top;
 	struct Process *prev;
 	struct Process *next;
-	File *fds[MAX_FDS];
+	struct File *fds[MAX_FDS];
 	ThreadLocaLStorageInfo tls;
 	void __user *tp;
 	InterruptFrame *frame;
 	AddressSpace vm;
 } Process;
+
 
 #define DEFAULT_STACK_SIZE (KB(32))
 

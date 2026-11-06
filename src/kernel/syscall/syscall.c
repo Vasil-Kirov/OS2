@@ -101,7 +101,9 @@ u32 handle_syscall(u32 eax, u32 ebx, u32 ecx, u32 edx, u32 esi, u32 edi)
 			const void __user *name_ptr = (void __user *)ebx;
 			const size_t name_len = ecx;
 			const u16 flags = edx;
+			const u32 mode = esi;
 			(void)flags;
+			(void)mode;
 
 			if (name_len > KERNEL_MAX_NAME_LEN) {
 				return -ErrSizeTooBig;

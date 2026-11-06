@@ -20,7 +20,7 @@ u8 *kheap_end=NULL;
 
 static const size_t HEAP_SIZE = MB(4);
 static const size_t CLASS_SIZES[] = {16, 32, 64, 128, 256, 512, 1024};
-FreeStack free_bins[ARRAY_COUNT(CLASS_SIZES)];
+static FreeStack free_bins[ARRAY_COUNT(CLASS_SIZES)];
 
 void kinit_heap()
 {

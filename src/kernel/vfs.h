@@ -6,6 +6,7 @@
 #include <kcommon.h>
 #include <list.h>
 #include <kmem.h>
+#include <proc/proc.h>
 
 typedef u16 mode_t;
 
@@ -133,7 +134,7 @@ void vfs_init();
 int vfs_setup_dev();
 
 DirEntry *vfs_find(string_view path);
-File *vfs_open(string_view path);
+File *vfs_open(string_view path, Credentials creds, u32 flags);
 void vfs_close(File *f);
 ssize_t vfs_read(File *file, void *buf, size_t size);
 ssize_t vfs_readdir(File *file, void *buf, size_t size);
