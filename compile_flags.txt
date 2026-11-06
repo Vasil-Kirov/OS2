@@ -2,6 +2,7 @@
 -ffreestanding
 -fno-builtin
 -nostdlib
+-Isrc/libc/include
 -Isrc/kernel
 -Isrc/kernel/arch/i686
 -std=c23
